@@ -1,10 +1,4 @@
-import React, {
-  createContext,
-  useContext,
-  ReactNode,
-  useState,
-  useEffect,
-} from "react";
+import React, { createContext, useContext, ReactNode, useEffect, useState } from "react";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { type Message } from "@langchain/langgraph-sdk";
 import {
@@ -17,14 +11,16 @@ import {
 import { useQueryState } from "nuqs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { LangGraphLogoSVG } from "@/components/icons/langgraph";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { ArrowRight } from "lucide-react";
 import { PasswordInput } from "@/components/ui/password-input";
-import { getApiKey } from "@/lib/api-key";
 import { useThreads } from "./Thread";
+import { resolveApiUrl } from "./client";
 import { toast } from "sonner";
+import {
+  REMEMBERED_BACKEND_URL_KEY,
+  REMEMBERED_USERNAME_KEY,
+} from "@/lib/auth";
 
 export type StateType = { messages: Message[]; ui?: UIMessage[] };
 
@@ -43,25 +39,29 @@ const useTypedStream = useStream<
 type StreamContextType = ReturnType<typeof useTypedStream>;
 const StreamContext = createContext<StreamContextType | undefined>(undefined);
 
+type SessionResponse = {
+  authenticated: boolean;
+  backendUrl?: string | null;
+  expiresAt?: number | null;
+  user?: {
+    user_id: number;
+    username: string;
+    is_admin: boolean;
+    panels: string[];
+  };
+};
+
 async function sleep(ms = 4000) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function checkGraphStatus(
-  apiUrl: string,
-  apiKey: string | null,
-  authScheme?: string,
-): Promise<boolean> {
+async function checkGraphStatus(apiUrl: string): Promise<boolean> {
   try {
-    const headers = new Headers();
-    if (apiKey) headers.set("X-Api-Key", apiKey);
-    if (authScheme) headers.set("X-Auth-Scheme", authScheme);
+    const infoResponse = await fetch(`${apiUrl}/info`);
+    if (infoResponse.ok) return true;
 
-    const res = await fetch(`${apiUrl}/info`, {
-      headers,
-    });
-
-    return res.ok;
+    const healthResponse = await fetch(`${apiUrl}/healthz`);
+    return healthResponse.ok;
   } catch (e) {
     console.error(e);
     return false;
@@ -70,28 +70,19 @@ async function checkGraphStatus(
 
 const StreamSession = ({
   children,
-  apiKey,
   apiUrl,
   assistantId,
-  authScheme,
 }: {
   children: ReactNode;
-  apiKey: string | null;
   apiUrl: string;
   assistantId: string;
-  authScheme?: string;
 }) => {
   const [threadId, setThreadId] = useQueryState("threadId");
   const { getThreads, setThreads } = useThreads();
+
   const streamValue = useTypedStream({
     apiUrl,
-    apiKey: apiKey ?? undefined,
     assistantId,
-    ...(authScheme && {
-      defaultHeaders: {
-        "X-Auth-Scheme": authScheme,
-      },
-    }),
     threadId: threadId ?? null,
     fetchStateHistory: true,
     onCustomEvent: (event, options) => {
@@ -104,20 +95,17 @@ const StreamSession = ({
     },
     onThreadId: (id) => {
       setThreadId(id);
-      // Refetch threads list when thread ID changes.
-      // Wait for some seconds before fetching so we're able to get the new thread that was created.
       sleep().then(() => getThreads().then(setThreads).catch(console.error));
     },
   });
 
   useEffect(() => {
-    checkGraphStatus(apiUrl, apiKey, authScheme).then((ok) => {
+    checkGraphStatus(apiUrl).then((ok) => {
       if (!ok) {
-        toast.error("Failed to connect to LangGraph server", {
+        toast.error("Failed to connect to gateway proxy", {
           description: () => (
             <p>
-              Please ensure your graph is running at <code>{apiUrl}</code> and
-              your API key is correctly set (if connecting to a deployed graph).
+              Please ensure the backend is reachable through <code>{apiUrl}</code>.
             </p>
           ),
           duration: 10000,
@@ -126,110 +114,176 @@ const StreamSession = ({
         });
       }
     });
-  }, [apiKey, apiUrl, authScheme]);
+  }, [apiUrl]);
 
   return (
-    <StreamContext.Provider value={streamValue}>
-      {children}
-    </StreamContext.Provider>
+    <StreamContext.Provider value={streamValue}>{children}</StreamContext.Provider>
   );
 };
 
-// Default values for the form
-const DEFAULT_API_URL = "http://localhost:2024";
+const DEFAULT_BACKEND_URL = "http://localhost:8123";
 const DEFAULT_ASSISTANT_ID = "agent";
-const AGENT_BUILDER_AUTH_SCHEME = "langsmith-api-key";
 
 export const StreamProvider: React.FC<{ children: ReactNode }> = ({
   children,
 }) => {
-  // Get environment variables
-  const envApiUrl: string | undefined = process.env.NEXT_PUBLIC_API_URL;
   const envAssistantId: string | undefined =
     process.env.NEXT_PUBLIC_ASSISTANT_ID;
-  const envAuthScheme: string | undefined = process.env.NEXT_PUBLIC_AUTH_SCHEME;
-
-  // Use URL params with env var fallbacks
-  const [apiUrl, setApiUrl] = useQueryState("apiUrl", {
-    defaultValue: envApiUrl || "",
-  });
+  const apiProxyUrl = process.env.NEXT_PUBLIC_API_PROXY_URL || "/api";
+  const resolvedApiProxyUrl = resolveApiUrl(apiProxyUrl);
   const [assistantId, setAssistantId] = useQueryState("assistantId", {
-    defaultValue: envAssistantId || "",
+    defaultValue: envAssistantId || DEFAULT_ASSISTANT_ID,
   });
-  const [authScheme, setAuthScheme] = useQueryState("authScheme", {
-    defaultValue: envAuthScheme || "",
-  });
-  const [isAgentBuilder, setIsAgentBuilder] = useState(
-    () =>
-      (authScheme || envAuthScheme || "").toLowerCase() ===
-      AGENT_BUILDER_AUTH_SCHEME,
-  );
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [session, setSession] = useState<SessionResponse | null>(null);
+  const [rememberedBackendUrl, setRememberedBackendUrl] = useState("");
+  const [rememberedUsername, setRememberedUsername] = useState("");
 
-  // For API key, use localStorage with env var fallback
-  const [apiKey, _setApiKey] = useState(() => {
-    const storedKey = getApiKey();
-    return storedKey || "";
-  });
+  useEffect(() => {
+    try {
+      const remembered = window.localStorage.getItem(REMEMBERED_BACKEND_URL_KEY);
+      if (remembered) setRememberedBackendUrl(remembered);
+      const rememberedUser = window.localStorage.getItem(REMEMBERED_USERNAME_KEY);
+      if (rememberedUser) setRememberedUsername(rememberedUser);
+    } catch {
+      // no-op
+    }
+  }, []);
 
-  const setApiKey = (key: string) => {
-    window.localStorage.setItem("lg:chat:apiKey", key);
-    _setApiKey(key);
+  const refreshSession = async () => {
+    setSessionLoading(true);
+    try {
+      const response = await fetch("/api/auth/session", { cache: "no-store" });
+      const payload = (await response.json()) as SessionResponse;
+      setSession(payload);
+      setAuthenticated(Boolean(payload.authenticated));
+
+      if (payload.backendUrl) {
+        try {
+          window.localStorage.setItem(REMEMBERED_BACKEND_URL_KEY, payload.backendUrl);
+          setRememberedBackendUrl(payload.backendUrl);
+        } catch {
+          // no-op
+        }
+      }
+    } catch {
+      setAuthenticated(false);
+      setSession(null);
+    } finally {
+      setSessionLoading(false);
+    }
   };
 
-  // Determine final values to use, prioritizing URL params then env vars
-  const finalApiUrl = apiUrl || envApiUrl;
-  const finalAssistantId = assistantId || envAssistantId;
-  const finalAuthScheme = authScheme || envAuthScheme || "";
+  useEffect(() => {
+    refreshSession().catch(console.error);
+  }, []);
 
-  // Show the form if we: don't have an API URL, or don't have an assistant ID
-  if (!finalApiUrl || !finalAssistantId) {
+  const finalAssistantId = assistantId || envAssistantId || DEFAULT_ASSISTANT_ID;
+
+  if (sessionLoading) {
+    return <div className="flex min-h-screen items-center justify-center">Loading...</div>;
+  }
+
+  if (!authenticated) {
     return (
       <div className="flex min-h-screen w-full items-center justify-center p-4">
-        <div className="animate-in fade-in-0 zoom-in-95 bg-background flex max-w-3xl flex-col rounded-lg border shadow-lg">
-          <div className="mt-14 flex flex-col gap-2 border-b p-6">
-            <div className="flex flex-col items-start gap-2">
-              <LangGraphLogoSVG className="h-7" />
-              <h1 className="text-xl font-semibold tracking-tight">
-                Agent Chat
-              </h1>
-            </div>
-            <p className="text-muted-foreground">
-              Welcome to Agent Chat! Before you get started, you need to enter
-              the URL of the deployment and the assistant / graph ID.
+        <div className="animate-in fade-in-0 zoom-in-95 bg-background flex w-full max-w-xl flex-col rounded-xl border shadow-lg">
+          <div className="mt-8 flex flex-col gap-1 border-b p-6">
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Agent Chat UI
+            </h1>
+            <p className="text-muted-foreground text-sm leading-relaxed">
+              Sign in with your gateway account to continue chatting with your
+              assistant.
             </p>
           </div>
           <form
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
 
               const form = e.target as HTMLFormElement;
               const formData = new FormData(form);
-              const apiUrl = formData.get("apiUrl") as string;
-              const assistantId = formData.get("assistantId") as string;
-              const apiKey = formData.get("apiKey") as string;
+              const backendUrl = String(formData.get("backendUrl") || "");
+              const username = String(formData.get("username") || "");
+              const password = String(formData.get("password") || "");
+              const nextAssistantId = String(formData.get("assistantId") || "");
 
-              setApiUrl(apiUrl);
-              setApiKey(apiKey);
-              setAssistantId(assistantId);
-              setAuthScheme(isAgentBuilder ? AGENT_BUILDER_AUTH_SCHEME : "");
+              const response = await fetch("/api/auth/login", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  backendUrl,
+                  username,
+                  password,
+                }),
+              });
+              const payload = (await response.json()) as { error?: string };
 
-              form.reset();
+              if (!response.ok) {
+                toast.error("Authentication failed", {
+                  description: payload.error || "Login request failed.",
+                });
+                return;
+              }
+
+              try {
+                window.localStorage.setItem(REMEMBERED_BACKEND_URL_KEY, backendUrl);
+                setRememberedBackendUrl(backendUrl);
+                window.localStorage.setItem(REMEMBERED_USERNAME_KEY, username);
+                setRememberedUsername(username);
+              } catch {
+                // no-op
+              }
+
+              setAssistantId(nextAssistantId || DEFAULT_ASSISTANT_ID);
+              await refreshSession();
             }}
             className="bg-muted/50 flex flex-col gap-6 p-6"
           >
             <div className="flex flex-col gap-2">
-              <Label htmlFor="apiUrl">
-                Deployment URL<span className="text-rose-500">*</span>
+              <Label htmlFor="username">
+                Username<span className="text-rose-500">*</span>
+              </Label>
+              <Input
+                id="username"
+                name="username"
+                autoComplete="username"
+                className="bg-background"
+                defaultValue={rememberedUsername || session?.user?.username || ""}
+                required
+              />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="password">
+                Password<span className="text-rose-500">*</span>
+              </Label>
+              <PasswordInput
+                id="password"
+                name="password"
+                autoComplete="current-password"
+                className="bg-background"
+                required
+              />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="backendUrl">
+                Backend URL<span className="text-rose-500">*</span>
               </Label>
               <p className="text-muted-foreground text-sm">
-                This is the URL of your LangGraph deployment. Can be a local, or
-                production deployment.
+                Gateway base URL, for example <code>http://localhost:8123</code>.
               </p>
               <Input
-                id="apiUrl"
-                name="apiUrl"
+                id="backendUrl"
+                name="backendUrl"
                 className="bg-background"
-                defaultValue={apiUrl || DEFAULT_API_URL}
+                defaultValue={
+                  rememberedBackendUrl ||
+                  session?.backendUrl ||
+                  DEFAULT_BACKEND_URL
+                }
                 required
               />
             </div>
@@ -238,53 +292,13 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
               <Label htmlFor="assistantId">
                 Assistant / Graph ID<span className="text-rose-500">*</span>
               </Label>
-              <p className="text-muted-foreground text-sm">
-                This is the ID of the graph (can be the graph name), or
-                assistant to fetch threads from, and invoke when actions are
-                taken.
-              </p>
               <Input
                 id="assistantId"
                 name="assistantId"
                 className="bg-background"
-                defaultValue={assistantId || DEFAULT_ASSISTANT_ID}
+                defaultValue={finalAssistantId}
                 required
               />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="apiKey">LangSmith API Key</Label>
-              <p className="text-muted-foreground text-sm">
-                This is <strong>NOT</strong> required if using a local LangGraph
-                server. This value is stored in your browser's local storage and
-                is only used to authenticate requests sent to your LangGraph
-                server.
-              </p>
-              <PasswordInput
-                id="apiKey"
-                name="apiKey"
-                defaultValue={apiKey ?? ""}
-                className="bg-background"
-                placeholder="lsv2_pt_..."
-              />
-            </div>
-
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex flex-col gap-1">
-                  <Label htmlFor="agentBuilderEnabled">
-                    Built with Agent Builder
-                  </Label>
-                  <p className="text-muted-foreground text-sm">
-                    Enable this for Agent Builder deployments.
-                  </p>
-                </div>
-                <Switch
-                  id="agentBuilderEnabled"
-                  checked={isAgentBuilder}
-                  onCheckedChange={setIsAgentBuilder}
-                />
-              </div>
             </div>
 
             <div className="mt-2 flex justify-end">
@@ -292,7 +306,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
                 type="submit"
                 size="lg"
               >
-                Continue
+                Sign in
                 <ArrowRight className="size-5" />
               </Button>
             </div>
@@ -304,22 +318,20 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
 
   return (
     <StreamSession
-      apiKey={apiKey}
-      apiUrl={finalApiUrl}
+      apiUrl={resolvedApiProxyUrl}
       assistantId={finalAssistantId}
-      authScheme={finalAuthScheme || undefined}
     >
       {children}
     </StreamSession>
   );
 };
 
-// Create a custom hook to use the context
 export const useStreamContext = (): StreamContextType => {
   const context = useContext(StreamContext);
   if (context === undefined) {
     throw new Error("useStreamContext must be used within a StreamProvider");
   }
+
   return context;
 };
 

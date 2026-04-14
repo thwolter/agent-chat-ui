@@ -12,8 +12,9 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PanelRightOpen, PanelRightClose } from "lucide-react";
+import { PanelRightOpen, PanelRightClose, LogOut } from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { toast } from "sonner";
 
 function ThreadList({
   threads,
@@ -85,6 +86,18 @@ export default function ThreadHistory() {
   const { getThreads, threads, setThreads, threadsLoading, setThreadsLoading } =
     useThreads();
 
+  const handleLogout = async () => {
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) {
+        throw new Error("Logout failed");
+      }
+      window.location.reload();
+    } catch {
+      toast.error("Failed to log out");
+    }
+  };
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     setThreadsLoading(true);
@@ -96,7 +109,7 @@ export default function ThreadHistory() {
 
   return (
     <>
-      <div className="shadow-inner-right hidden h-screen w-[300px] shrink-0 flex-col items-start justify-start gap-6 border-r-[1px] border-slate-300 lg:flex">
+      <div className="shadow-inner-right hidden h-screen w-[300px] shrink-0 flex-col items-start justify-start border-r-[1px] border-slate-300 lg:flex">
         <div className="flex w-full items-center justify-between px-4 pt-1.5">
           <Button
             className="hover:bg-gray-100"
@@ -113,11 +126,23 @@ export default function ThreadHistory() {
             Thread History
           </h1>
         </div>
-        {threadsLoading ? (
-          <ThreadHistoryLoading />
-        ) : (
-          <ThreadList threads={threads} />
-        )}
+        <div className="min-h-0 w-full flex-1 px-0 pt-6">
+          {threadsLoading ? (
+            <ThreadHistoryLoading />
+          ) : (
+            <ThreadList threads={threads} />
+          )}
+        </div>
+        <div className="w-full border-t px-3 py-3">
+          <Button
+            variant="ghost"
+            className="w-full justify-start gap-2"
+            onClick={handleLogout}
+          >
+            <LogOut className="size-4" />
+            Log out
+          </Button>
+        </div>
       </div>
       <div className="lg:hidden">
         <Sheet
@@ -134,10 +159,24 @@ export default function ThreadHistory() {
             <SheetHeader>
               <SheetTitle>Thread History</SheetTitle>
             </SheetHeader>
-            <ThreadList
-              threads={threads}
-              onThreadClick={() => setChatHistoryOpen((o) => !o)}
-            />
+            <div className="mt-4 flex min-h-0 flex-1 flex-col">
+              <div className="min-h-0 flex-1">
+                <ThreadList
+                  threads={threads}
+                  onThreadClick={() => setChatHistoryOpen((o) => !o)}
+                />
+              </div>
+              <div className="mt-3 border-t pt-3">
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start gap-2"
+                  onClick={handleLogout}
+                >
+                  <LogOut className="size-4" />
+                  Log out
+                </Button>
+              </div>
+            </div>
           </SheetContent>
         </Sheet>
       </div>
