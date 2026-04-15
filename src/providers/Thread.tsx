@@ -1,4 +1,3 @@
-import { validate } from "uuid";
 import { Thread } from "@langchain/langgraph-sdk";
 import { useQueryState } from "nuqs";
 import {
@@ -11,6 +10,7 @@ import {
   SetStateAction,
 } from "react";
 import { createClient } from "./client";
+import { getThreadSearchMetadata } from "@/lib/thread-search-metadata";
 
 interface ThreadContextType {
   getThreads: () => Promise<Thread[]>;
@@ -21,16 +21,6 @@ interface ThreadContextType {
 }
 
 const ThreadContext = createContext<ThreadContextType | undefined>(undefined);
-
-function getThreadSearchMetadata(
-  assistantId: string,
-): { graph_id: string } | { assistant_id: string } {
-  if (validate(assistantId)) {
-    return { assistant_id: assistantId };
-  } else {
-    return { graph_id: assistantId };
-  }
-}
 
 export function ThreadProvider({ children }: { children: ReactNode }) {
   const envAssistantId: string | undefined =

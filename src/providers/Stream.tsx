@@ -21,6 +21,7 @@ import {
   REMEMBERED_BACKEND_URL_KEY,
   REMEMBERED_USERNAME_KEY,
 } from "@/lib/auth";
+import { getThreadSearchMetadata } from "@/lib/thread-search-metadata";
 
 export type StateType = { messages: Message[]; ui?: UIMessage[] };
 
@@ -99,6 +100,18 @@ const StreamSession = ({
     },
   });
 
+  const streamValueWithMetadata = {
+    ...streamValue,
+    submit: (values: Parameters<typeof streamValue.submit>[0], options?: Parameters<typeof streamValue.submit>[1]) =>
+      streamValue.submit(values, {
+        ...options,
+        metadata: {
+          ...getThreadSearchMetadata(assistantId),
+          ...(options?.metadata ?? {}),
+        },
+      }),
+  };
+
   useEffect(() => {
     checkGraphStatus(apiUrl).then((ok) => {
       if (!ok) {
@@ -117,7 +130,9 @@ const StreamSession = ({
   }, [apiUrl]);
 
   return (
-    <StreamContext.Provider value={streamValue}>{children}</StreamContext.Provider>
+    <StreamContext.Provider value={streamValueWithMetadata}>
+      {children}
+    </StreamContext.Provider>
   );
 };
 
