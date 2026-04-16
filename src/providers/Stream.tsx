@@ -1,4 +1,4 @@
-import React, { createContext, useContext, ReactNode, useEffect, useState } from "react";
+import React, { createContext, useContext, ReactNode, useEffect, useMemo, useState } from "react";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { type Message } from "@langchain/langgraph-sdk";
 import {
@@ -81,6 +81,12 @@ const StreamSession = ({
   const [threadId, setThreadId] = useQueryState("threadId");
   const { getThreads, setThreads } = useThreads();
 
+  useEffect(() => {
+    // Always start on a blank chat session, like the original UI.
+    // This avoids auto-attaching to a previously selected thread via URL query state.
+    setThreadId(null);
+  }, [setThreadId]);
+
   const streamValue = useTypedStream({
     apiUrl,
     assistantId,
@@ -100,17 +106,29 @@ const StreamSession = ({
     },
   });
 
-  const streamValueWithMetadata = {
-    ...streamValue,
-    submit: (values: Parameters<typeof streamValue.submit>[0], options?: Parameters<typeof streamValue.submit>[1]) =>
-      streamValue.submit(values, {
-        ...options,
-        metadata: {
-          ...getThreadSearchMetadata(assistantId),
-          ...(options?.metadata ?? {}),
+  const streamValueWithMetadata = useMemo(
+    () =>
+      new Proxy(streamValue, {
+        get(target, prop, receiver) {
+          if (prop === "submit") {
+            return (
+              values: Parameters<typeof target.submit>[0],
+              options?: Parameters<typeof target.submit>[1],
+            ) =>
+              target.submit(values, {
+                ...options,
+                metadata: {
+                  ...getThreadSearchMetadata(assistantId),
+                  ...(options?.metadata ?? {}),
+                },
+              });
+          }
+
+          return Reflect.get(target, prop, receiver);
         },
       }),
-  };
+    [assistantId, streamValue],
+  );
 
   useEffect(() => {
     checkGraphStatus(apiUrl).then((ok) => {

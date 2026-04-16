@@ -27,7 +27,9 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
     process.env.NEXT_PUBLIC_ASSISTANT_ID;
   const apiProxyUrl = process.env.NEXT_PUBLIC_API_PROXY_URL || "/api";
 
-  const [assistantId] = useQueryState("assistantId");
+  const [assistantId] = useQueryState("assistantId", {
+    defaultValue: envAssistantId || "agent",
+  });
   const [threads, setThreads] = useState<Thread[]>([]);
   const [threadsLoading, setThreadsLoading] = useState(false);
 
