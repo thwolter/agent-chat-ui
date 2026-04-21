@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   AUTH_BACKEND_URL_COOKIE,
+  AUTH_EMAIL_COOKIE,
   AUTH_EXPIRES_AT_COOKIE,
   AUTH_TOKEN_COOKIE,
   AUTH_TOKEN_TYPE_COOKIE,
@@ -42,11 +43,13 @@ export async function GET(req: NextRequest) {
       response.cookies.delete(AUTH_EXPIRES_AT_COOKIE);
       response.cookies.delete(AUTH_USER_ID_COOKIE);
       response.cookies.delete(AUTH_USERNAME_COOKIE);
+      response.cookies.delete(AUTH_EMAIL_COOKIE);
       return response;
     }
 
     const me = (await meResponse.json()) as {
       user_id: number;
+      email?: string;
       username: string;
       is_admin: boolean;
       panels: string[];

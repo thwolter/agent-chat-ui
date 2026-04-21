@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import {
   AUTH_BACKEND_URL_COOKIE,
+  AUTH_EMAIL_COOKIE,
   AUTH_TOKEN_COOKIE,
   AUTH_TOKEN_TYPE_COOKIE,
   AUTH_USER_ID_COOKIE,
@@ -46,19 +47,24 @@ function buildProxyHeaders(req: NextRequest, isAuthRoute: boolean): Headers {
   }
 
   const cookieToken = req.cookies.get(AUTH_TOKEN_COOKIE)?.value;
-  const cookieTokenType = req.cookies.get(AUTH_TOKEN_TYPE_COOKIE)?.value || "bearer";
+  const cookieTokenType =
+    req.cookies.get(AUTH_TOKEN_TYPE_COOKIE)?.value || "bearer";
   const cookieUserId = req.cookies.get(AUTH_USER_ID_COOKIE)?.value;
   const cookieUsername = req.cookies.get(AUTH_USERNAME_COOKIE)?.value;
+  const cookieEmail = req.cookies.get(AUTH_EMAIL_COOKIE)?.value;
 
   if (cookieToken) {
     headers.set("authorization", `${cookieTokenType} ${cookieToken}`);
     if (cookieUserId) headers.set("x-auth-user-id", cookieUserId);
     if (cookieUsername) headers.set("x-auth-username", cookieUsername);
+    if (cookieEmail) headers.set("x-auth-email", cookieEmail);
     return headers;
   }
 
   if (!LANGGRAPH_BEARER_TOKEN) {
-    throw new Error("No authentication token configured. Please sign in first.");
+    throw new Error(
+      "No authentication token configured. Please sign in first.",
+    );
   }
 
   headers.set("authorization", `Bearer ${LANGGRAPH_BEARER_TOKEN}`);

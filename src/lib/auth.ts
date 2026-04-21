@@ -4,8 +4,10 @@ export const AUTH_BACKEND_URL_COOKIE = "lg:auth:backend_url";
 export const AUTH_EXPIRES_AT_COOKIE = "lg:auth:expires_at";
 export const AUTH_USER_ID_COOKIE = "lg:auth:user_id";
 export const AUTH_USERNAME_COOKIE = "lg:auth:username";
+export const AUTH_EMAIL_COOKIE = "lg:auth:email";
 export const REMEMBERED_BACKEND_URL_KEY = "lg:auth:remembered_backend_url";
 export const REMEMBERED_USERNAME_KEY = "lg:auth:remembered_username";
+export const REMEMBERED_EMAIL_KEY = "lg:auth:remembered_email";
 
 export function normalizeBackendUrl(input: string): string {
   const trimmed = input.trim().replace(/\/+$/, "");

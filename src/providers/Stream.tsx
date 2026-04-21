@@ -1,4 +1,11 @@
-import React, { createContext, useContext, ReactNode, useEffect, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  ReactNode,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { type Message } from "@langchain/langgraph-sdk";
 import {
@@ -19,6 +26,7 @@ import { resolveApiUrl } from "./client";
 import { toast } from "sonner";
 import {
   REMEMBERED_BACKEND_URL_KEY,
+  REMEMBERED_EMAIL_KEY,
   REMEMBERED_USERNAME_KEY,
 } from "@/lib/auth";
 import { getThreadSearchMetadata } from "@/lib/thread-search-metadata";
@@ -46,6 +54,7 @@ type SessionResponse = {
   expiresAt?: number | null;
   user?: {
     user_id: number;
+    email?: string;
     username: string;
     is_admin: boolean;
     panels: string[];
@@ -136,7 +145,8 @@ const StreamSession = ({
         toast.error("Failed to connect to gateway proxy", {
           description: () => (
             <p>
-              Please ensure the backend is reachable through <code>{apiUrl}</code>.
+              Please ensure the backend is reachable through{" "}
+              <code>{apiUrl}</code>.
             </p>
           ),
           duration: 10000,
@@ -171,14 +181,18 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
   const [authenticated, setAuthenticated] = useState(false);
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [rememberedBackendUrl, setRememberedBackendUrl] = useState("");
-  const [rememberedUsername, setRememberedUsername] = useState("");
+  const [rememberedEmail, setRememberedEmail] = useState("");
 
   useEffect(() => {
     try {
-      const remembered = window.localStorage.getItem(REMEMBERED_BACKEND_URL_KEY);
+      const remembered = window.localStorage.getItem(
+        REMEMBERED_BACKEND_URL_KEY,
+      );
       if (remembered) setRememberedBackendUrl(remembered);
-      const rememberedUser = window.localStorage.getItem(REMEMBERED_USERNAME_KEY);
-      if (rememberedUser) setRememberedUsername(rememberedUser);
+      const rememberedEmail =
+        window.localStorage.getItem(REMEMBERED_EMAIL_KEY) ||
+        window.localStorage.getItem(REMEMBERED_USERNAME_KEY);
+      if (rememberedEmail) setRememberedEmail(rememberedEmail);
     } catch {
       // no-op
     }
@@ -194,7 +208,10 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
 
       if (payload.backendUrl) {
         try {
-          window.localStorage.setItem(REMEMBERED_BACKEND_URL_KEY, payload.backendUrl);
+          window.localStorage.setItem(
+            REMEMBERED_BACKEND_URL_KEY,
+            payload.backendUrl,
+          );
           setRememberedBackendUrl(payload.backendUrl);
         } catch {
           // no-op
@@ -212,10 +229,15 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
     refreshSession().catch(console.error);
   }, []);
 
-  const finalAssistantId = assistantId || envAssistantId || DEFAULT_ASSISTANT_ID;
+  const finalAssistantId =
+    assistantId || envAssistantId || DEFAULT_ASSISTANT_ID;
 
   if (sessionLoading) {
-    return <div className="flex min-h-screen items-center justify-center">Loading...</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        Loading...
+      </div>
+    );
   }
 
   if (!authenticated) {
@@ -238,7 +260,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
               const form = e.target as HTMLFormElement;
               const formData = new FormData(form);
               const backendUrl = String(formData.get("backendUrl") || "");
-              const username = String(formData.get("username") || "");
+              const email = String(formData.get("email") || "");
               const password = String(formData.get("password") || "");
               const nextAssistantId = String(formData.get("assistantId") || "");
 
@@ -247,7 +269,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify({
                   backendUrl,
-                  username,
+                  email,
                   password,
                 }),
               });
@@ -261,10 +283,14 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
               }
 
               try {
-                window.localStorage.setItem(REMEMBERED_BACKEND_URL_KEY, backendUrl);
+                window.localStorage.setItem(
+                  REMEMBERED_BACKEND_URL_KEY,
+                  backendUrl,
+                );
                 setRememberedBackendUrl(backendUrl);
-                window.localStorage.setItem(REMEMBERED_USERNAME_KEY, username);
-                setRememberedUsername(username);
+                window.localStorage.setItem(REMEMBERED_EMAIL_KEY, email);
+                window.localStorage.removeItem(REMEMBERED_USERNAME_KEY);
+                setRememberedEmail(email);
               } catch {
                 // no-op
               }
@@ -275,15 +301,21 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
             className="bg-muted/50 flex flex-col gap-6 p-6"
           >
             <div className="flex flex-col gap-2">
-              <Label htmlFor="username">
-                Username<span className="text-rose-500">*</span>
+              <Label htmlFor="email">
+                Email<span className="text-rose-500">*</span>
               </Label>
               <Input
-                id="username"
-                name="username"
-                autoComplete="username"
+                id="email"
+                name="email"
+                type="email"
+                autoComplete="email"
                 className="bg-background"
-                defaultValue={rememberedUsername || session?.user?.username || ""}
+                defaultValue={
+                  rememberedEmail ||
+                  session?.user?.email ||
+                  session?.user?.username ||
+                  ""
+                }
                 required
               />
             </div>
@@ -306,7 +338,8 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
                 Backend URL<span className="text-rose-500">*</span>
               </Label>
               <p className="text-muted-foreground text-sm">
-                Gateway base URL, for example <code>http://localhost:8123</code>.
+                Gateway base URL, for example <code>http://localhost:8123</code>
+                .
               </p>
               <Input
                 id="backendUrl"

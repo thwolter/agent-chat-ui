@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   AUTH_BACKEND_URL_COOKIE,
+  AUTH_EMAIL_COOKIE,
   AUTH_EXPIRES_AT_COOKIE,
   AUTH_TOKEN_COOKIE,
   AUTH_TOKEN_TYPE_COOKIE,
@@ -12,6 +13,7 @@ import {
 
 type LoginBody = {
   backendUrl?: string;
+  email?: string;
   username?: string;
   password?: string;
 };
@@ -32,21 +34,24 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as LoginBody;
     const backendUrl = normalizeBackendUrl(body.backendUrl ?? "");
-    const username = (body.username ?? "").trim();
+    const email = (body.email ?? body.username ?? "").trim();
     const password = body.password ?? "";
 
-    if (!username || !password) {
+    if (!email || !password) {
       return NextResponse.json(
-        { error: "Username and password are required." },
+        { error: "Email and password are required." },
         { status: 400 },
       );
     }
 
-    const loginResponse = await fetch(withDirectPrefix(backendUrl, "/auth/login"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
+    const loginResponse = await fetch(
+      withDirectPrefix(backendUrl, "/auth/login"),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      },
+    );
 
     if (!loginResponse.ok) {
       let detail = "Authentication failed.";
@@ -56,7 +61,10 @@ export async function POST(req: NextRequest) {
       } catch {
         // no-op
       }
-      return NextResponse.json({ error: detail }, { status: loginResponse.status });
+      return NextResponse.json(
+        { error: detail },
+        { status: loginResponse.status },
+      );
     }
 
     const payload = (await loginResponse.json()) as {
@@ -75,7 +83,8 @@ export async function POST(req: NextRequest) {
     const tokenType = (payload.token_type || "bearer").toLowerCase();
     const expiresAt = Date.now() + payload.expires_in * 1000;
 
-    let usernameForCookie = username;
+    let emailForCookie = email;
+    let usernameForCookie = "";
     let userIdForCookie: string | undefined;
     try {
       const meResponse = await fetch(withDirectPrefix(backendUrl, "/auth/me"), {
@@ -87,10 +96,14 @@ export async function POST(req: NextRequest) {
       if (meResponse.ok) {
         const me = (await meResponse.json()) as {
           user_id?: number;
+          email?: string;
           username?: string;
         };
         if (typeof me.user_id === "number") {
           userIdForCookie = String(me.user_id);
+        }
+        if (typeof me.email === "string" && me.email.trim()) {
+          emailForCookie = me.email;
         }
         if (typeof me.username === "string" && me.username.trim()) {
           usernameForCookie = me.username;
@@ -133,15 +146,24 @@ export async function POST(req: NextRequest) {
       );
     }
     response.cookies.set(
-      AUTH_USERNAME_COOKIE,
-      usernameForCookie,
+      AUTH_EMAIL_COOKIE,
+      emailForCookie,
       buildCookieOptions(payload.expires_in),
     );
+    if (usernameForCookie) {
+      response.cookies.set(
+        AUTH_USERNAME_COOKIE,
+        usernameForCookie,
+        buildCookieOptions(payload.expires_in),
+      );
+    }
 
     return response;
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Unexpected authentication error.";
+      error instanceof Error
+        ? error.message
+        : "Unexpected authentication error.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

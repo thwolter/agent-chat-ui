@@ -45,7 +45,7 @@ When the app starts, users must sign in before the chat UI is rendered.
 The login form asks for:
 
 - **Backend URL**: Base URL of your secure gateway (for example `http://localhost:8123`).
-- **Username**
+- **Email**
 - **Password**
 - **Assistant / Graph ID**
 
@@ -62,7 +62,7 @@ The backend URL is remembered locally so it is prefilled on the next login.
 
 This fork expects auth endpoints documented by your backend and available in your deployment:
 
-- `POST /auth/login` with `{ "username": "...", "password": "..." }`
+- `POST /auth/login` with `{ "email": "...", "password": "..." }`
 - `GET /auth/me` with `Authorization: Bearer <token>`
 - proxied LangGraph routes under `/gateway/{path}`
 

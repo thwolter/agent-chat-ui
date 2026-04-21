@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  AUTH_EMAIL_COOKIE,
   AUTH_EXPIRES_AT_COOKIE,
   AUTH_TOKEN_COOKIE,
   AUTH_TOKEN_TYPE_COOKIE,
@@ -14,5 +15,6 @@ export async function POST() {
   response.cookies.delete(AUTH_EXPIRES_AT_COOKIE);
   response.cookies.delete(AUTH_USER_ID_COOKIE);
   response.cookies.delete(AUTH_USERNAME_COOKIE);
+  response.cookies.delete(AUTH_EMAIL_COOKIE);
   return response;
 }
