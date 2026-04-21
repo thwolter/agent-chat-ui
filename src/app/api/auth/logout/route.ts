@@ -1,20 +1,33 @@
-import { NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import {
-  AUTH_EMAIL_COOKIE,
-  AUTH_EXPIRES_AT_COOKIE,
-  AUTH_TOKEN_COOKIE,
-  AUTH_TOKEN_TYPE_COOKIE,
-  AUTH_USER_ID_COOKIE,
-  AUTH_USERNAME_COOKIE,
+  appendGatewayRefreshCookies,
+  clearAuthCookies,
+  getAuthBackendUrl,
+  withDirectPrefix,
 } from "@/lib/auth";
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  let logoutHeaders: Headers | null = null;
+  try {
+    const cookieHeader = req.headers.get("cookie");
+    const logoutResponse = await fetch(
+      withDirectPrefix(getAuthBackendUrl(), "/auth/logout"),
+      {
+        method: "POST",
+        headers: cookieHeader ? { cookie: cookieHeader } : undefined,
+        credentials: "include",
+        cache: "no-store",
+      },
+    );
+    logoutHeaders = logoutResponse.headers;
+  } catch {
+    // Frontend auth state should be cleared even if the gateway is unreachable.
+  }
+
   const response = NextResponse.json({ ok: true });
-  response.cookies.delete(AUTH_TOKEN_COOKIE);
-  response.cookies.delete(AUTH_TOKEN_TYPE_COOKIE);
-  response.cookies.delete(AUTH_EXPIRES_AT_COOKIE);
-  response.cookies.delete(AUTH_USER_ID_COOKIE);
-  response.cookies.delete(AUTH_USERNAME_COOKIE);
-  response.cookies.delete(AUTH_EMAIL_COOKIE);
+  clearAuthCookies(response);
+  if (logoutHeaders) {
+    appendGatewayRefreshCookies(response.headers, logoutHeaders);
+  }
   return response;
 }

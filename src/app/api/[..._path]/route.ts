@@ -8,8 +8,14 @@ import {
   getAuthBackendUrl,
   normalizeBackendUrl,
   type SessionAgent,
+  type TokenResponse,
   withDirectPrefix,
 } from "@/lib/auth";
+import {
+  applyRefreshResult,
+  clearAuthStateResponse,
+  refreshAccessToken,
+} from "@/lib/auth-server";
 
 export const runtime = "edge";
 
@@ -17,18 +23,22 @@ const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL;
 const LANGGRAPH_BEARER_TOKEN =
   process.env.LANGGRAPH_BEARER_TOKEN ?? process.env.LANGSMITH_API_KEY;
 
-async function getAuthorizedAgents(req: NextRequest): Promise<SessionAgent[]> {
-  const cookieToken = req.cookies.get(AUTH_TOKEN_COOKIE)?.value;
-  const cookieTokenType =
-    req.cookies.get(AUTH_TOKEN_TYPE_COOKIE)?.value || "bearer";
+type RefreshResult = Awaited<ReturnType<typeof refreshAccessToken>>;
 
-  if (!cookieToken) return [];
+type AuthOverride = {
+  token: string;
+  tokenType: string;
+};
 
+async function fetchAuthorizedAgents(
+  token: string,
+  tokenType: string,
+): Promise<SessionAgent[]> {
   const response = await fetch(
     withDirectPrefix(getAuthBackendUrl(), "/auth/session"),
     {
       headers: {
-        authorization: `${cookieTokenType} ${cookieToken}`,
+        authorization: `${tokenType} ${token}`,
       },
       cache: "no-store",
     },
@@ -40,18 +50,57 @@ async function getAuthorizedAgents(req: NextRequest): Promise<SessionAgent[]> {
   return session.agents ?? [];
 }
 
-async function resolveBaseUrl(req: NextRequest): Promise<string> {
+async function getAuthorizedAgents(
+  req: NextRequest,
+): Promise<{ agents: SessionAgent[]; refreshResult?: RefreshResult }> {
+  let cookieToken = req.cookies.get(AUTH_TOKEN_COOKIE)?.value;
+  let cookieTokenType =
+    req.cookies.get(AUTH_TOKEN_TYPE_COOKIE)?.value || "bearer";
+  let refreshResult: RefreshResult | undefined;
+
+  if (!cookieToken) {
+    try {
+      refreshResult = await refreshAccessToken(req);
+      cookieToken = refreshResult.payload.access_token;
+      cookieTokenType = (
+        refreshResult.payload.token_type || "bearer"
+      ).toLowerCase();
+    } catch {
+      return { agents: [] };
+    }
+  }
+
+  let agents = await fetchAuthorizedAgents(cookieToken, cookieTokenType);
+  if (agents.length > 0) return { agents, refreshResult };
+
+  try {
+    refreshResult = await refreshAccessToken(req);
+    agents = await fetchAuthorizedAgents(
+      refreshResult.payload.access_token,
+      (refreshResult.payload.token_type || "bearer").toLowerCase(),
+    );
+    return { agents, refreshResult };
+  } catch {
+    return { agents: [] };
+  }
+}
+
+async function resolveBaseUrl(
+  req: NextRequest,
+): Promise<{ baseUrl: string; refreshResult?: RefreshResult }> {
   const agentId = req.headers.get("x-agent-id");
   if (agentId) {
-    const agents = await getAuthorizedAgents(req);
+    const { agents, refreshResult } = await getAuthorizedAgents(req);
     const agent = agents.find((item) => item.id === agentId);
     if (!agent) {
       throw new Error("Selected agent is not available for this user.");
     }
-    return normalizeBackendUrl(agent.url);
+    return { baseUrl: normalizeBackendUrl(agent.url), refreshResult };
   }
 
-  if (LANGGRAPH_API_URL) return LANGGRAPH_API_URL.replace(/\/$/, "");
+  if (LANGGRAPH_API_URL) {
+    return { baseUrl: LANGGRAPH_API_URL.replace(/\/$/, "") };
+  }
   throw new Error("No agent selected. Please choose an agent first.");
 }
 
@@ -59,15 +108,19 @@ async function buildTargetUrl(
   req: NextRequest,
   pathSegments: string[] | undefined,
   requestUrl: URL,
-): Promise<URL> {
-  const base = await resolveBaseUrl(req);
+): Promise<{ targetUrl: URL; refreshResult?: RefreshResult }> {
+  const { baseUrl, refreshResult } = await resolveBaseUrl(req);
   const path = (pathSegments ?? []).join("/");
-  const target = new URL(withDirectPrefix(base, path));
+  const target = new URL(withDirectPrefix(baseUrl, path));
   target.search = requestUrl.search;
-  return target;
+  return { targetUrl: target, refreshResult };
 }
 
-function buildProxyHeaders(req: NextRequest, isAuthRoute: boolean): Headers {
+function buildProxyHeaders(
+  req: NextRequest,
+  isAuthRoute: boolean,
+  authOverride?: AuthOverride,
+): Headers {
   const headers = new Headers(req.headers);
 
   headers.delete("host");
@@ -80,9 +133,12 @@ function buildProxyHeaders(req: NextRequest, isAuthRoute: boolean): Headers {
     return headers;
   }
 
-  const cookieToken = req.cookies.get(AUTH_TOKEN_COOKIE)?.value;
+  const cookieToken =
+    authOverride?.token ?? req.cookies.get(AUTH_TOKEN_COOKIE)?.value;
   const cookieTokenType =
-    req.cookies.get(AUTH_TOKEN_TYPE_COOKIE)?.value || "bearer";
+    authOverride?.tokenType ??
+    req.cookies.get(AUTH_TOKEN_TYPE_COOKIE)?.value ??
+    "bearer";
   const cookieUserId = req.cookies.get(AUTH_USER_ID_COOKIE)?.value;
   const cookieUsername = req.cookies.get(AUTH_USERNAME_COOKIE)?.value;
   const cookieEmail = req.cookies.get(AUTH_EMAIL_COOKIE)?.value;
@@ -106,6 +162,13 @@ function buildProxyHeaders(req: NextRequest, isAuthRoute: boolean): Headers {
   return headers;
 }
 
+function authOverrideFromPayload(payload: TokenResponse): AuthOverride {
+  return {
+    token: payload.access_token,
+    tokenType: (payload.token_type || "bearer").toLowerCase(),
+  };
+}
+
 async function proxy(
   req: NextRequest,
   { params }: { params: Promise<{ _path?: string[] }> },
@@ -114,34 +177,62 @@ async function proxy(
     const resolvedParams = await params;
     const path = (resolvedParams._path ?? []).join("/");
     const isAuthRoute = path.startsWith("auth/");
-    const targetUrl = await buildTargetUrl(
-      req,
-      resolvedParams._path,
-      req.nextUrl,
-    );
+    const { targetUrl, refreshResult: routeRefreshResult } =
+      await buildTargetUrl(req, resolvedParams._path, req.nextUrl);
+    const routeAuthOverride = routeRefreshResult
+      ? authOverrideFromPayload(routeRefreshResult.payload)
+      : undefined;
 
     const method = req.method.toUpperCase();
+    const bodyBuffer =
+      method !== "GET" && method !== "HEAD"
+        ? await req.arrayBuffer()
+        : undefined;
     const init: RequestInit = {
       method,
-      headers: buildProxyHeaders(req, isAuthRoute),
+      headers: buildProxyHeaders(req, isAuthRoute, routeAuthOverride),
     };
 
-    if (method !== "GET" && method !== "HEAD") {
-      const bodyBuffer = await req.arrayBuffer();
-      if (bodyBuffer.byteLength > 0) {
-        init.body = bodyBuffer;
+    if (bodyBuffer && bodyBuffer.byteLength > 0) {
+      init.body = bodyBuffer;
+    }
+
+    let upstreamResponse = await fetch(targetUrl, init);
+    let retryRefreshResult: RefreshResult | undefined;
+
+    if (!isAuthRoute && upstreamResponse.status === 401) {
+      try {
+        retryRefreshResult = await refreshAccessToken(req);
+        upstreamResponse = await fetch(targetUrl, {
+          ...init,
+          headers: buildProxyHeaders(
+            req,
+            isAuthRoute,
+            authOverrideFromPayload(retryRefreshResult.payload),
+          ),
+          body:
+            bodyBuffer && bodyBuffer.byteLength > 0
+              ? bodyBuffer.slice(0)
+              : undefined,
+        });
+      } catch {
+        return clearAuthStateResponse({
+          error: "Authentication refresh failed.",
+        });
       }
     }
 
-    const upstreamResponse = await fetch(targetUrl, init);
     const headers = new Headers(upstreamResponse.headers);
     headers.delete("set-cookie");
 
-    return new Response(upstreamResponse.body, {
+    const response = new NextResponse(upstreamResponse.body, {
       status: upstreamResponse.status,
       statusText: upstreamResponse.statusText,
       headers,
     });
+    if (routeRefreshResult) applyRefreshResult(response, routeRefreshResult);
+    if (retryRefreshResult) applyRefreshResult(response, retryRefreshResult);
+    return response;
   } catch (error) {
     console.error("LangGraph proxy error:", error);
 

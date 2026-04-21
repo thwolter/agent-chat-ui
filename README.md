@@ -53,8 +53,9 @@ Authentication flow:
 
 1. UI calls `POST /api/auth/login`.
 2. Server route forwards to `<backend-url>/auth/login`.
-3. Access token is stored in HTTP-only cookies.
+3. Access token is stored in HTTP-only cookies, and the gateway refresh cookie is forwarded to the frontend proxy.
 4. Chat traffic goes through `/api/[..._path]`, which injects the bearer token and proxies to `<backend-url>/gateway/*`.
+5. The frontend refreshes access tokens through `POST /api/auth/refresh` before expiry and the proxy retries authenticated requests once after a 401.
 
 The backend URL is remembered locally so it is prefilled on the next login.
 
@@ -63,8 +64,13 @@ The backend URL is remembered locally so it is prefilled on the next login.
 This fork expects auth endpoints documented by your backend and available in your deployment:
 
 - `POST /auth/login` with `{ "email": "...", "password": "..." }`
+- `POST /auth/refresh` with the refresh cookie, returning a rotated access token and refresh cookie
+- `POST /auth/logout` with the refresh cookie, revoking the refresh session and clearing the cookie
+- `GET /auth/session` with `Authorization: Bearer <token>`
 - `GET /auth/me` with `Authorization: Bearer <token>`
 - proxied LangGraph routes under `/gateway/{path}`
+
+For local development with separate frontend and gateway origins, ensure the gateway allows the frontend origin through `CORS_ORIGINS`. HTTP local development should set `REFRESH_COOKIE_SECURE=false`; HTTPS environments should keep it enabled.
 
 ## Environment Variables
 

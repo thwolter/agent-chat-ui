@@ -30,6 +30,7 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
   const getThreads = useCallback(async (): Promise<Thread[]> => {
     const sessionResponse = await fetch("/api/auth/session", {
       cache: "no-store",
+      credentials: "include",
     });
     const session = (await sessionResponse.json()) as AuthSession;
     if (!session.authenticated || session.agents.length === 0) return [];

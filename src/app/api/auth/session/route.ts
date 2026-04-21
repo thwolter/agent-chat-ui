@@ -1,53 +1,77 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  AUTH_EMAIL_COOKIE,
   AUTH_EXPIRES_AT_COOKIE,
   AUTH_TOKEN_COOKIE,
   AUTH_TOKEN_TYPE_COOKIE,
-  AUTH_USER_ID_COOKIE,
-  AUTH_USERNAME_COOKIE,
+  clearAuthCookies,
   getAuthBackendUrl,
+  type TokenResponse,
   withDirectPrefix,
 } from "@/lib/auth";
+import { applyRefreshResult, refreshAccessToken } from "@/lib/auth-server";
+
+async function fetchGatewaySession(
+  backendUrl: string,
+  token: string,
+  tokenType: string,
+) {
+  return fetch(withDirectPrefix(backendUrl, "/auth/session"), {
+    headers: {
+      authorization: `${tokenType} ${token}`,
+    },
+    cache: "no-store",
+  });
+}
+
+function unauthenticatedResponse(expiresAt?: string | null) {
+  const response = NextResponse.json({
+    authenticated: false,
+    expiresAt: expiresAt ? Number(expiresAt) : null,
+    agents: [],
+  });
+  clearAuthCookies(response);
+  return response;
+}
 
 export async function GET(req: NextRequest) {
   const backendUrl = getAuthBackendUrl();
-  const token = req.cookies.get(AUTH_TOKEN_COOKIE)?.value;
-  const tokenType = req.cookies.get(AUTH_TOKEN_TYPE_COOKIE)?.value || "bearer";
+  let token = req.cookies.get(AUTH_TOKEN_COOKIE)?.value;
+  let tokenType = req.cookies.get(AUTH_TOKEN_TYPE_COOKIE)?.value || "bearer";
   const expiresAt = req.cookies.get(AUTH_EXPIRES_AT_COOKIE)?.value;
+  let refreshResult: Awaited<ReturnType<typeof refreshAccessToken>> | undefined;
 
   if (!token) {
-    return NextResponse.json({
-      authenticated: false,
-      expiresAt: expiresAt ? Number(expiresAt) : null,
-      agents: [],
-    });
+    try {
+      refreshResult = await refreshAccessToken(req);
+      token = refreshResult.payload.access_token;
+      tokenType = (refreshResult.payload.token_type || "bearer").toLowerCase();
+    } catch {
+      return unauthenticatedResponse(expiresAt);
+    }
   }
 
   try {
-    const sessionResponse = await fetch(
-      withDirectPrefix(backendUrl, "/auth/session"),
-      {
-        headers: {
-          authorization: `${tokenType} ${token}`,
-        },
-        cache: "no-store",
-      },
+    let sessionResponse = await fetchGatewaySession(
+      backendUrl,
+      token,
+      tokenType,
     );
 
     if (!sessionResponse.ok) {
-      const response = NextResponse.json({
-        authenticated: false,
-        expiresAt: expiresAt ? Number(expiresAt) : null,
-        agents: [],
-      });
-      response.cookies.delete(AUTH_TOKEN_COOKIE);
-      response.cookies.delete(AUTH_TOKEN_TYPE_COOKIE);
-      response.cookies.delete(AUTH_EXPIRES_AT_COOKIE);
-      response.cookies.delete(AUTH_USER_ID_COOKIE);
-      response.cookies.delete(AUTH_USERNAME_COOKIE);
-      response.cookies.delete(AUTH_EMAIL_COOKIE);
-      return response;
+      try {
+        refreshResult = await refreshAccessToken(req);
+        const refreshedPayload = refreshResult.payload as TokenResponse;
+        token = refreshedPayload.access_token;
+        tokenType = (refreshedPayload.token_type || "bearer").toLowerCase();
+        sessionResponse = await fetchGatewaySession(
+          backendUrl,
+          token,
+          tokenType,
+        );
+      } catch {
+        return unauthenticatedResponse(expiresAt);
+      }
+      if (!sessionResponse.ok) return unauthenticatedResponse(expiresAt);
     }
 
     const session = (await sessionResponse.json()) as {
@@ -69,12 +93,18 @@ export async function GET(req: NextRequest) {
       }[];
     };
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       authenticated: true,
-      expiresAt: expiresAt ? Number(expiresAt) : null,
+      expiresAt: refreshResult
+        ? Date.now() + refreshResult.payload.expires_in * 1000
+        : expiresAt
+          ? Number(expiresAt)
+          : null,
       user: session.user,
       agents: session.agents,
     });
+    if (refreshResult) applyRefreshResult(response, refreshResult);
+    return response;
   } catch {
     try {
       const meResponse = await fetch(withDirectPrefix(backendUrl, "/auth/me"), {
@@ -85,11 +115,7 @@ export async function GET(req: NextRequest) {
       });
 
       if (!meResponse.ok) {
-        return NextResponse.json({
-          authenticated: false,
-          expiresAt: expiresAt ? Number(expiresAt) : null,
-          agents: [],
-        });
+        return unauthenticatedResponse(expiresAt);
       }
 
       const me = (await meResponse.json()) as {
@@ -100,9 +126,13 @@ export async function GET(req: NextRequest) {
         is_admin: boolean;
       };
 
-      return NextResponse.json({
+      const response = NextResponse.json({
         authenticated: true,
-        expiresAt: expiresAt ? Number(expiresAt) : null,
+        expiresAt: refreshResult
+          ? Date.now() + refreshResult.payload.expires_in * 1000
+          : expiresAt
+            ? Number(expiresAt)
+            : null,
         user: {
           id: me.user_id,
           email: me.email,
@@ -112,12 +142,10 @@ export async function GET(req: NextRequest) {
         },
         agents: [],
       });
+      if (refreshResult) applyRefreshResult(response, refreshResult);
+      return response;
     } catch {
-      return NextResponse.json({
-        authenticated: false,
-        expiresAt: expiresAt ? Number(expiresAt) : null,
-        agents: [],
-      });
+      return unauthenticatedResponse(expiresAt);
     }
   }
 }

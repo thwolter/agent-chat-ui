@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PanelRightOpen, PanelRightClose, LogOut } from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { toast } from "sonner";
+import { logout } from "@/lib/auth-client";
 
 function ThreadList({
   threads,
@@ -106,11 +107,7 @@ export default function ThreadHistory() {
 
   const handleLogout = async () => {
     try {
-      const response = await fetch("/api/auth/logout", { method: "POST" });
-      if (!response.ok) {
-        throw new Error("Logout failed");
-      }
-      window.location.reload();
+      await logout();
     } catch {
       toast.error("Failed to log out");
     }
