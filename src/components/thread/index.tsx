@@ -22,6 +22,8 @@ import {
   SquarePen,
   XIcon,
   Plus,
+  ChevronDown,
+  Check,
 } from "lucide-react";
 import { useQueryState, parseAsBoolean } from "nuqs";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
@@ -140,10 +142,13 @@ export function Thread() {
 
   const stream = useStreamContext();
   const { agents, selectedAgentId, setSelectedAgentId } = useAgentContext();
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const messages = stream.messages;
   const isLoading = stream.isLoading;
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
 
   const lastError = useRef<string | undefined>(undefined);
+  const agentMenuRef = useRef<HTMLDivElement | null>(null);
 
   const setThreadId = (id: string | null) => {
     _setThreadId(id);
@@ -257,10 +262,35 @@ export function Thread() {
   );
 
   const handleAgentChange = (agentId: string) => {
+    setAgentMenuOpen(false);
     if (agentId === selectedAgentId) return;
     setSelectedAgentId(agentId);
     setThreadId(null);
   };
+
+  useEffect(() => {
+    if (!agentMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (
+        agentMenuRef.current &&
+        !agentMenuRef.current.contains(event.target as Node)
+      ) {
+        setAgentMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAgentMenuOpen(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [agentMenuOpen]);
 
   return (
     <div className="flex h-screen w-full overflow-hidden">
@@ -488,29 +518,56 @@ export function Thread() {
                       />
 
                       <div className="flex flex-wrap items-center gap-4 p-2 pt-4">
-                        <div className="flex min-w-40 flex-col gap-1">
-                          <Label
-                            htmlFor="agent-select"
-                            className="text-xs text-gray-600"
-                          >
-                            Agent
-                          </Label>
-                          <select
+                        <div
+                          ref={agentMenuRef}
+                          className="relative flex items-center"
+                        >
+                          <button
                             id="agent-select"
-                            value={selectedAgentId}
+                            type="button"
+                            aria-label="Agent"
+                            aria-haspopup="listbox"
+                            aria-expanded={agentMenuOpen}
                             disabled={isLoading}
-                            onChange={(e) => handleAgentChange(e.target.value)}
-                            className="border-input bg-background h-9 rounded-md border px-3 text-sm shadow-xs outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => setAgentMenuOpen((open) => !open)}
+                            className="flex h-9 items-center gap-1.5 border-none bg-transparent px-0 text-sm text-gray-700 shadow-none transition-colors outline-none hover:text-gray-950 focus-visible:text-gray-950 disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            {agents.map((agent) => (
-                              <option
-                                key={agent.id}
-                                value={agent.id}
-                              >
-                                {agent.name}
-                              </option>
-                            ))}
-                          </select>
+                            <span>{selectedAgent?.name}</span>
+                            <ChevronDown
+                              className={cn(
+                                "size-4 text-gray-500 transition-transform",
+                                agentMenuOpen && "rotate-180",
+                              )}
+                            />
+                          </button>
+                          {agentMenuOpen && (
+                            <div
+                              role="listbox"
+                              aria-labelledby="agent-select"
+                              className="bg-background absolute bottom-full left-0 z-20 mb-2 min-w-48 overflow-hidden rounded-md border shadow-lg"
+                            >
+                              {agents.map((agent) => (
+                                <button
+                                  key={agent.id}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={agent.id === selectedAgentId}
+                                  onClick={() => handleAgentChange(agent.id)}
+                                  className={cn(
+                                    "flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-gray-100",
+                                    agent.id === selectedAgentId
+                                      ? "text-gray-950"
+                                      : "text-gray-700",
+                                  )}
+                                >
+                                  <span className="truncate">{agent.name}</span>
+                                  {agent.id === selectedAgentId && (
+                                    <Check className="size-4 shrink-0 text-gray-700" />
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
                         <div>
                           <div className="flex items-center space-x-2">
