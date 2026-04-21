@@ -18,14 +18,14 @@ export function createClient(
   apiUrl: string,
   apiKey?: string,
   authScheme?: string,
+  defaultHeaders?: Record<string, string>,
 ) {
   return new Client({
     apiUrl: resolveApiUrl(apiUrl),
     apiKey,
-    ...(authScheme && {
-      defaultHeaders: {
-        "X-Auth-Scheme": authScheme,
-      },
-    }),
+    defaultHeaders: {
+      ...(defaultHeaders ?? {}),
+      ...(authScheme ? { "X-Auth-Scheme": authScheme } : {}),
+    },
   });
 }

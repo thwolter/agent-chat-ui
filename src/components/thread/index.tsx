@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 import { ReactNode, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { useStreamContext } from "@/providers/Stream";
+import { useAgentContext, useStreamContext } from "@/providers/Stream";
 import { useState, FormEvent } from "react";
 import { Button } from "../ui/button";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
@@ -139,6 +139,7 @@ export function Thread() {
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
 
   const stream = useStreamContext();
+  const { agents, selectedAgentId, setSelectedAgentId } = useAgentContext();
   const messages = stream.messages;
   const isLoading = stream.isLoading;
 
@@ -254,6 +255,12 @@ export function Thread() {
   const hasNoAIOrToolMessages = !messages.find(
     (m) => m.type === "ai" || m.type === "tool",
   );
+
+  const handleAgentChange = (agentId: string) => {
+    if (agentId === selectedAgentId) return;
+    setSelectedAgentId(agentId);
+    setThreadId(null);
+  };
 
   return (
     <div className="flex h-screen w-full overflow-hidden">
@@ -480,7 +487,31 @@ export function Thread() {
                         className="field-sizing-content resize-none border-none bg-transparent p-3.5 pb-0 shadow-none ring-0 outline-none focus:ring-0 focus:outline-none"
                       />
 
-                      <div className="flex items-center gap-6 p-2 pt-4">
+                      <div className="flex flex-wrap items-center gap-4 p-2 pt-4">
+                        <div className="flex min-w-40 flex-col gap-1">
+                          <Label
+                            htmlFor="agent-select"
+                            className="text-xs text-gray-600"
+                          >
+                            Agent
+                          </Label>
+                          <select
+                            id="agent-select"
+                            value={selectedAgentId}
+                            disabled={isLoading}
+                            onChange={(e) => handleAgentChange(e.target.value)}
+                            className="border-input bg-background h-9 rounded-md border px-3 text-sm shadow-xs outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {agents.map((agent) => (
+                              <option
+                                key={agent.id}
+                                value={agent.id}
+                              >
+                                {agent.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                         <div>
                           <div className="flex items-center space-x-2">
                             <Switch

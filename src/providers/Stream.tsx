@@ -4,6 +4,7 @@ import React, {
   ReactNode,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useStream } from "@langchain/langgraph-sdk/react";
@@ -25,9 +26,12 @@ import { useThreads } from "./Thread";
 import { resolveApiUrl } from "./client";
 import { toast } from "sonner";
 import {
-  REMEMBERED_BACKEND_URL_KEY,
+  AuthSession,
+  getAgentAssistantId,
   REMEMBERED_EMAIL_KEY,
   REMEMBERED_USERNAME_KEY,
+  SELECTED_AGENT_ID_KEY,
+  SessionAgent,
 } from "@/lib/auth";
 import { getThreadSearchMetadata } from "@/lib/thread-search-metadata";
 
@@ -48,29 +52,28 @@ const useTypedStream = useStream<
 type StreamContextType = ReturnType<typeof useTypedStream>;
 const StreamContext = createContext<StreamContextType | undefined>(undefined);
 
-type SessionResponse = {
-  authenticated: boolean;
-  backendUrl?: string | null;
-  expiresAt?: number | null;
-  user?: {
-    user_id: number;
-    email?: string;
-    username: string;
-    is_admin: boolean;
-    panels: string[];
-  };
+type AgentContextType = {
+  agents: SessionAgent[];
+  selectedAgent: SessionAgent;
+  selectedAgentId: string;
+  setSelectedAgentId: (agentId: string) => void;
 };
+const AgentContext = createContext<AgentContextType | undefined>(undefined);
 
 async function sleep(ms = 4000) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function checkGraphStatus(apiUrl: string): Promise<boolean> {
+async function checkGraphStatus(
+  apiUrl: string,
+  agentId: string,
+): Promise<boolean> {
+  const init = { headers: { "x-agent-id": agentId } };
   try {
-    const infoResponse = await fetch(`${apiUrl}/info`);
+    const infoResponse = await fetch(`${apiUrl}/info`, init);
     if (infoResponse.ok) return true;
 
-    const healthResponse = await fetch(`${apiUrl}/healthz`);
+    const healthResponse = await fetch(`${apiUrl}/healthz`, init);
     return healthResponse.ok;
   } catch (e) {
     console.error(e);
@@ -81,24 +84,29 @@ async function checkGraphStatus(apiUrl: string): Promise<boolean> {
 const StreamSession = ({
   children,
   apiUrl,
-  assistantId,
+  selectedAgent,
 }: {
   children: ReactNode;
   apiUrl: string;
-  assistantId: string;
+  selectedAgent: SessionAgent;
 }) => {
   const [threadId, setThreadId] = useQueryState("threadId");
   const { getThreads, setThreads } = useThreads();
+  const assistantId = getAgentAssistantId(selectedAgent);
+  const initialThreadResetDone = useRef(false);
 
   useEffect(() => {
-    // Always start on a blank chat session, like the original UI.
-    // This avoids auto-attaching to a previously selected thread via URL query state.
+    if (initialThreadResetDone.current) return;
+    initialThreadResetDone.current = true;
     setThreadId(null);
   }, [setThreadId]);
 
   const streamValue = useTypedStream({
     apiUrl,
     assistantId,
+    defaultHeaders: {
+      "x-agent-id": selectedAgent.id,
+    },
     threadId: threadId ?? null,
     fetchStateHistory: true,
     onCustomEvent: (event, options) => {
@@ -128,6 +136,9 @@ const StreamSession = ({
                 ...options,
                 metadata: {
                   ...getThreadSearchMetadata(assistantId),
+                  agent_id: selectedAgent.id,
+                  agent_key: selectedAgent.key,
+                  agent_name: selectedAgent.name,
                   ...(options?.metadata ?? {}),
                 },
               });
@@ -136,11 +147,11 @@ const StreamSession = ({
           return Reflect.get(target, prop, receiver);
         },
       }),
-    [assistantId, streamValue],
+    [assistantId, selectedAgent, streamValue],
   );
 
   useEffect(() => {
-    checkGraphStatus(apiUrl).then((ok) => {
+    checkGraphStatus(apiUrl, selectedAgent.id).then((ok) => {
       if (!ok) {
         toast.error("Failed to connect to gateway proxy", {
           description: () => (
@@ -155,7 +166,7 @@ const StreamSession = ({
         });
       }
     });
-  }, [apiUrl]);
+  }, [apiUrl, selectedAgent.id]);
 
   return (
     <StreamContext.Provider value={streamValueWithMetadata}>
@@ -164,58 +175,70 @@ const StreamSession = ({
   );
 };
 
-const DEFAULT_BACKEND_URL = "http://localhost:8123";
-const DEFAULT_ASSISTANT_ID = "agent";
-
 export const StreamProvider: React.FC<{ children: ReactNode }> = ({
   children,
 }) => {
-  const envAssistantId: string | undefined =
-    process.env.NEXT_PUBLIC_ASSISTANT_ID;
   const apiProxyUrl = process.env.NEXT_PUBLIC_API_PROXY_URL || "/api";
   const resolvedApiProxyUrl = resolveApiUrl(apiProxyUrl);
-  const [assistantId, setAssistantId] = useQueryState("assistantId", {
-    defaultValue: envAssistantId || DEFAULT_ASSISTANT_ID,
-  });
   const [sessionLoading, setSessionLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
-  const [session, setSession] = useState<SessionResponse | null>(null);
-  const [rememberedBackendUrl, setRememberedBackendUrl] = useState("");
+  const [session, setSession] = useState<AuthSession | null>(null);
   const [rememberedEmail, setRememberedEmail] = useState("");
+  const [selectedAgentId, setSelectedAgentIdState] = useState("");
 
   useEffect(() => {
     try {
-      const remembered = window.localStorage.getItem(
-        REMEMBERED_BACKEND_URL_KEY,
-      );
-      if (remembered) setRememberedBackendUrl(remembered);
       const rememberedEmail =
         window.localStorage.getItem(REMEMBERED_EMAIL_KEY) ||
         window.localStorage.getItem(REMEMBERED_USERNAME_KEY);
       if (rememberedEmail) setRememberedEmail(rememberedEmail);
+      const rememberedAgentId = window.localStorage.getItem(
+        SELECTED_AGENT_ID_KEY,
+      );
+      if (rememberedAgentId) setSelectedAgentIdState(rememberedAgentId);
     } catch {
       // no-op
     }
   }, []);
 
+  const setSelectedAgentId = (agentId: string) => {
+    setSelectedAgentIdState(agentId);
+    try {
+      window.localStorage.setItem(SELECTED_AGENT_ID_KEY, agentId);
+    } catch {
+      // no-op
+    }
+  };
+
   const refreshSession = async () => {
     setSessionLoading(true);
     try {
       const response = await fetch("/api/auth/session", { cache: "no-store" });
-      const payload = (await response.json()) as SessionResponse;
+      const payload = (await response.json()) as AuthSession;
       setSession(payload);
       setAuthenticated(Boolean(payload.authenticated));
 
-      if (payload.backendUrl) {
-        try {
-          window.localStorage.setItem(
-            REMEMBERED_BACKEND_URL_KEY,
-            payload.backendUrl,
-          );
-          setRememberedBackendUrl(payload.backendUrl);
-        } catch {
-          // no-op
-        }
+      if (payload.agents.length) {
+        setSelectedAgentIdState((current) => {
+          if (payload.agents.some((agent) => agent.id === current)) {
+            return current;
+          }
+          let rememberedAgentId: string | null = null;
+          try {
+            rememberedAgentId = window.localStorage.getItem(
+              SELECTED_AGENT_ID_KEY,
+            );
+          } catch {
+            // no-op
+          }
+          if (
+            rememberedAgentId &&
+            payload.agents.some((agent) => agent.id === rememberedAgentId)
+          ) {
+            return rememberedAgentId;
+          }
+          return payload.agents[0].id;
+        });
       }
     } catch {
       setAuthenticated(false);
@@ -229,8 +252,9 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
     refreshSession().catch(console.error);
   }, []);
 
-  const finalAssistantId =
-    assistantId || envAssistantId || DEFAULT_ASSISTANT_ID;
+  const agents = session?.agents ?? [];
+  const selectedAgent =
+    agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
 
   if (sessionLoading) {
     return (
@@ -259,16 +283,13 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
 
               const form = e.target as HTMLFormElement;
               const formData = new FormData(form);
-              const backendUrl = String(formData.get("backendUrl") || "");
               const email = String(formData.get("email") || "");
               const password = String(formData.get("password") || "");
-              const nextAssistantId = String(formData.get("assistantId") || "");
 
               const response = await fetch("/api/auth/login", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify({
-                  backendUrl,
                   email,
                   password,
                 }),
@@ -283,11 +304,6 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
               }
 
               try {
-                window.localStorage.setItem(
-                  REMEMBERED_BACKEND_URL_KEY,
-                  backendUrl,
-                );
-                setRememberedBackendUrl(backendUrl);
                 window.localStorage.setItem(REMEMBERED_EMAIL_KEY, email);
                 window.localStorage.removeItem(REMEMBERED_USERNAME_KEY);
                 setRememberedEmail(email);
@@ -295,7 +311,6 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
                 // no-op
               }
 
-              setAssistantId(nextAssistantId || DEFAULT_ASSISTANT_ID);
               await refreshSession();
             }}
             className="bg-muted/50 flex flex-col gap-6 p-6"
@@ -310,12 +325,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
                 type="email"
                 autoComplete="email"
                 className="bg-background"
-                defaultValue={
-                  rememberedEmail ||
-                  session?.user?.email ||
-                  session?.user?.username ||
-                  ""
-                }
+                defaultValue={rememberedEmail || session?.user?.email || ""}
                 required
               />
             </div>
@@ -329,40 +339,6 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
                 name="password"
                 autoComplete="current-password"
                 className="bg-background"
-                required
-              />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="backendUrl">
-                Backend URL<span className="text-rose-500">*</span>
-              </Label>
-              <p className="text-muted-foreground text-sm">
-                Gateway base URL, for example <code>http://localhost:8123</code>
-                .
-              </p>
-              <Input
-                id="backendUrl"
-                name="backendUrl"
-                className="bg-background"
-                defaultValue={
-                  rememberedBackendUrl ||
-                  session?.backendUrl ||
-                  DEFAULT_BACKEND_URL
-                }
-                required
-              />
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="assistantId">
-                Assistant / Graph ID<span className="text-rose-500">*</span>
-              </Label>
-              <Input
-                id="assistantId"
-                name="assistantId"
-                className="bg-background"
-                defaultValue={finalAssistantId}
                 required
               />
             </div>
@@ -382,13 +358,47 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
     );
   }
 
+  if (!selectedAgent) {
+    return (
+      <div className="flex min-h-screen w-full items-center justify-center p-4">
+        <div className="bg-background flex w-full max-w-lg flex-col gap-3 rounded-xl border p-6 shadow-lg">
+          <h1 className="text-xl font-semibold tracking-tight">
+            No agents available
+          </h1>
+          <p className="text-muted-foreground text-sm leading-relaxed">
+            Your account is authenticated, but the gateway did not return any
+            agents for this user.
+          </p>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              await fetch("/api/auth/logout", { method: "POST" });
+              window.location.reload();
+            }}
+          >
+            Sign out
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <StreamSession
-      apiUrl={resolvedApiProxyUrl}
-      assistantId={finalAssistantId}
+    <AgentContext.Provider
+      value={{
+        agents,
+        selectedAgent,
+        selectedAgentId: selectedAgent.id,
+        setSelectedAgentId,
+      }}
     >
-      {children}
-    </StreamSession>
+      <StreamSession
+        apiUrl={resolvedApiProxyUrl}
+        selectedAgent={selectedAgent}
+      >
+        {children}
+      </StreamSession>
+    </AgentContext.Provider>
   );
 };
 
@@ -396,6 +406,15 @@ export const useStreamContext = (): StreamContextType => {
   const context = useContext(StreamContext);
   if (context === undefined) {
     throw new Error("useStreamContext must be used within a StreamProvider");
+  }
+
+  return context;
+};
+
+export const useAgentContext = (): AgentContextType => {
+  const context = useContext(AgentContext);
+  if (context === undefined) {
+    throw new Error("useAgentContext must be used within a StreamProvider");
   }
 
   return context;

@@ -1,11 +1,13 @@
 import { type NextRequest, NextResponse } from "next/server";
 import {
-  AUTH_BACKEND_URL_COOKIE,
   AUTH_EMAIL_COOKIE,
   AUTH_TOKEN_COOKIE,
   AUTH_TOKEN_TYPE_COOKIE,
   AUTH_USER_ID_COOKIE,
   AUTH_USERNAME_COOKIE,
+  getAuthBackendUrl,
+  normalizeBackendUrl,
+  type SessionAgent,
   withDirectPrefix,
 } from "@/lib/auth";
 
@@ -15,19 +17,50 @@ const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL;
 const LANGGRAPH_BEARER_TOKEN =
   process.env.LANGGRAPH_BEARER_TOKEN ?? process.env.LANGSMITH_API_KEY;
 
-function resolveBaseUrl(req: NextRequest): string {
-  const cookieBase = req.cookies.get(AUTH_BACKEND_URL_COOKIE)?.value;
-  if (cookieBase) return cookieBase.replace(/\/$/, "");
-  if (LANGGRAPH_API_URL) return LANGGRAPH_API_URL.replace(/\/$/, "");
-  throw new Error("No backend URL configured. Please sign in first.");
+async function getAuthorizedAgents(req: NextRequest): Promise<SessionAgent[]> {
+  const cookieToken = req.cookies.get(AUTH_TOKEN_COOKIE)?.value;
+  const cookieTokenType =
+    req.cookies.get(AUTH_TOKEN_TYPE_COOKIE)?.value || "bearer";
+
+  if (!cookieToken) return [];
+
+  const response = await fetch(
+    withDirectPrefix(getAuthBackendUrl(), "/auth/session"),
+    {
+      headers: {
+        authorization: `${cookieTokenType} ${cookieToken}`,
+      },
+      cache: "no-store",
+    },
+  );
+
+  if (!response.ok) return [];
+
+  const session = (await response.json()) as { agents?: SessionAgent[] };
+  return session.agents ?? [];
 }
 
-function buildTargetUrl(
+async function resolveBaseUrl(req: NextRequest): Promise<string> {
+  const agentId = req.headers.get("x-agent-id");
+  if (agentId) {
+    const agents = await getAuthorizedAgents(req);
+    const agent = agents.find((item) => item.id === agentId);
+    if (!agent) {
+      throw new Error("Selected agent is not available for this user.");
+    }
+    return normalizeBackendUrl(agent.url);
+  }
+
+  if (LANGGRAPH_API_URL) return LANGGRAPH_API_URL.replace(/\/$/, "");
+  throw new Error("No agent selected. Please choose an agent first.");
+}
+
+async function buildTargetUrl(
   req: NextRequest,
   pathSegments: string[] | undefined,
   requestUrl: URL,
-): URL {
-  const base = resolveBaseUrl(req);
+): Promise<URL> {
+  const base = await resolveBaseUrl(req);
   const path = (pathSegments ?? []).join("/");
   const target = new URL(withDirectPrefix(base, path));
   target.search = requestUrl.search;
@@ -41,6 +74,7 @@ function buildProxyHeaders(req: NextRequest, isAuthRoute: boolean): Headers {
   headers.delete("content-length");
   headers.delete("connection");
   headers.delete("cookie");
+  headers.delete("x-agent-id");
 
   if (isAuthRoute) {
     return headers;
@@ -80,7 +114,11 @@ async function proxy(
     const resolvedParams = await params;
     const path = (resolvedParams._path ?? []).join("/");
     const isAuthRoute = path.startsWith("auth/");
-    const targetUrl = buildTargetUrl(req, resolvedParams._path, req.nextUrl);
+    const targetUrl = await buildTargetUrl(
+      req,
+      resolvedParams._path,
+      req.nextUrl,
+    );
 
     const method = req.method.toUpperCase();
     const init: RequestInit = {

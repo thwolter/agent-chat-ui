@@ -1,5 +1,4 @@
 import { Thread } from "@langchain/langgraph-sdk";
-import { useQueryState } from "nuqs";
 import {
   createContext,
   useContext,
@@ -10,7 +9,7 @@ import {
   SetStateAction,
 } from "react";
 import { createClient } from "./client";
-import { getThreadSearchMetadata } from "@/lib/thread-search-metadata";
+import { AuthSession } from "@/lib/auth";
 
 interface ThreadContextType {
   getThreads: () => Promise<Thread[]>;
@@ -23,30 +22,57 @@ interface ThreadContextType {
 const ThreadContext = createContext<ThreadContextType | undefined>(undefined);
 
 export function ThreadProvider({ children }: { children: ReactNode }) {
-  const envAssistantId: string | undefined =
-    process.env.NEXT_PUBLIC_ASSISTANT_ID;
   const apiProxyUrl = process.env.NEXT_PUBLIC_API_PROXY_URL || "/api";
 
-  const [assistantId] = useQueryState("assistantId", {
-    defaultValue: envAssistantId || "agent",
-  });
   const [threads, setThreads] = useState<Thread[]>([]);
   const [threadsLoading, setThreadsLoading] = useState(false);
 
   const getThreads = useCallback(async (): Promise<Thread[]> => {
-    const resolvedAssistantId = assistantId || envAssistantId;
-    if (!resolvedAssistantId) return [];
-    const client = createClient(apiProxyUrl);
-
-    const threads = await client.threads.search({
-      metadata: {
-        ...getThreadSearchMetadata(resolvedAssistantId),
-      },
-      limit: 100,
+    const sessionResponse = await fetch("/api/auth/session", {
+      cache: "no-store",
     });
+    const session = (await sessionResponse.json()) as AuthSession;
+    if (!session.authenticated || session.agents.length === 0) return [];
 
-    return threads;
-  }, [apiProxyUrl, assistantId, envAssistantId]);
+    const threadGroups = await Promise.all(
+      session.agents.map(async (agent) => {
+        const client = createClient(apiProxyUrl, undefined, undefined, {
+          "x-agent-id": agent.id,
+        });
+        const agentThreads = await client.threads.search({
+          limit: 100,
+        });
+
+        return agentThreads.map((thread) => ({
+          ...thread,
+          metadata: {
+            ...(thread.metadata ?? {}),
+            agent_id:
+              typeof thread.metadata?.agent_id === "string"
+                ? thread.metadata.agent_id
+                : agent.id,
+            agent_key:
+              typeof thread.metadata?.agent_key === "string"
+                ? thread.metadata.agent_key
+                : agent.key,
+            agent_name:
+              typeof thread.metadata?.agent_name === "string"
+                ? thread.metadata.agent_name
+                : agent.name,
+          },
+        }));
+      }),
+    );
+
+    return threadGroups
+      .flat()
+      .sort((a, b) => {
+        const aUpdated = new Date(a.updated_at ?? 0).getTime();
+        const bUpdated = new Date(b.updated_at ?? 0).getTime();
+        return bUpdated - aUpdated;
+      })
+      .slice(0, 100);
+  }, [apiProxyUrl]);
 
   const value = {
     getThreads,

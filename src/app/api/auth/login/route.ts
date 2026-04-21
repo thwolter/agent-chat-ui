@@ -1,24 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  AUTH_BACKEND_URL_COOKIE,
   AUTH_EMAIL_COOKIE,
   AUTH_EXPIRES_AT_COOKIE,
   AUTH_TOKEN_COOKIE,
   AUTH_TOKEN_TYPE_COOKIE,
   AUTH_USER_ID_COOKIE,
   AUTH_USERNAME_COOKIE,
-  normalizeBackendUrl,
+  getAuthBackendUrl,
   withDirectPrefix,
 } from "@/lib/auth";
 
 type LoginBody = {
-  backendUrl?: string;
   email?: string;
   username?: string;
   password?: string;
 };
-
-const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
 
 function buildCookieOptions(maxAge?: number) {
   return {
@@ -33,7 +29,7 @@ function buildCookieOptions(maxAge?: number) {
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as LoginBody;
-    const backendUrl = normalizeBackendUrl(body.backendUrl ?? "");
+    const backendUrl = getAuthBackendUrl();
     const email = (body.email ?? body.username ?? "").trim();
     const password = body.password ?? "";
 
@@ -95,18 +91,22 @@ export async function POST(req: NextRequest) {
 
       if (meResponse.ok) {
         const me = (await meResponse.json()) as {
-          user_id?: number;
+          user_id?: string;
           email?: string;
-          username?: string;
+          first_name?: string | null;
+          last_name?: string | null;
         };
-        if (typeof me.user_id === "number") {
-          userIdForCookie = String(me.user_id);
+        if (typeof me.user_id === "string" && me.user_id.trim()) {
+          userIdForCookie = me.user_id;
         }
         if (typeof me.email === "string" && me.email.trim()) {
           emailForCookie = me.email;
         }
-        if (typeof me.username === "string" && me.username.trim()) {
-          usernameForCookie = me.username;
+        const fullName = [me.first_name, me.last_name]
+          .filter((part): part is string => Boolean(part?.trim()))
+          .join(" ");
+        if (fullName) {
+          usernameForCookie = fullName;
         }
       }
     } catch {
@@ -116,7 +116,6 @@ export async function POST(req: NextRequest) {
     const response = NextResponse.json({
       ok: true,
       expiresIn: payload.expires_in,
-      backendUrl,
     });
 
     response.cookies.set(
@@ -133,11 +132,6 @@ export async function POST(req: NextRequest) {
       ...buildCookieOptions(payload.expires_in),
       httpOnly: false,
     });
-    response.cookies.set(
-      AUTH_BACKEND_URL_COOKIE,
-      backendUrl,
-      buildCookieOptions(ONE_YEAR_SECONDS),
-    );
     if (userIdForCookie) {
       response.cookies.set(
         AUTH_USER_ID_COOKIE,

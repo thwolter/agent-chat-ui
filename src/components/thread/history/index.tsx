@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { useAgentContext } from "@/providers/Stream";
 import { useThreads } from "@/providers/Thread";
 import { Thread } from "@langchain/langgraph-sdk";
 import { useEffect } from "react";
@@ -21,14 +22,23 @@ function ThreadList({
   onThreadClick,
 }: {
   threads: Thread[];
-  onThreadClick?: (threadId: string) => void;
+  onThreadClick?: (thread: Thread) => void;
 }) {
   const [threadId, setThreadId] = useQueryState("threadId");
+  const { setSelectedAgentId } = useAgentContext();
 
   return (
     <div className="flex h-full w-full flex-col items-start justify-start gap-2 overflow-y-scroll [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-track]:bg-transparent">
       {threads.map((t) => {
         let itemText = t.thread_id;
+        const agentId =
+          typeof t.metadata?.agent_id === "string"
+            ? t.metadata.agent_id
+            : undefined;
+        const agentName =
+          typeof t.metadata?.agent_name === "string"
+            ? t.metadata.agent_name
+            : undefined;
         if (
           typeof t.values === "object" &&
           t.values &&
@@ -41,7 +51,7 @@ function ThreadList({
         }
         return (
           <div
-            key={t.thread_id}
+            key={`${agentId ?? "unknown"}:${t.thread_id}`}
             className="w-full px-1"
           >
             <Button
@@ -49,12 +59,20 @@ function ThreadList({
               className="w-[280px] items-start justify-start text-left font-normal"
               onClick={(e) => {
                 e.preventDefault();
-                onThreadClick?.(t.thread_id);
+                onThreadClick?.(t);
+                if (agentId) setSelectedAgentId(agentId);
                 if (t.thread_id === threadId) return;
                 setThreadId(t.thread_id);
               }}
             >
-              <p className="truncate text-ellipsis">{itemText}</p>
+              <div className="flex min-w-0 flex-col items-start">
+                <p className="max-w-full truncate text-ellipsis">{itemText}</p>
+                {agentName && (
+                  <p className="text-muted-foreground max-w-full truncate text-xs">
+                    {agentName}
+                  </p>
+                )}
+              </div>
             </Button>
           </div>
         );
