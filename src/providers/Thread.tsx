@@ -25,7 +25,7 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
   const apiProxyUrl = process.env.NEXT_PUBLIC_API_PROXY_URL || "/api";
 
   const [threads, setThreads] = useState<Thread[]>([]);
-  const [threadsLoading, setThreadsLoading] = useState(false);
+  const [threadsLoading, setThreadsLoading] = useState(true);
 
   const getThreads = useCallback(async (): Promise<Thread[]> => {
     const sessionResponse = await fetch("/api/auth/session", {

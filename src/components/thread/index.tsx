@@ -257,16 +257,22 @@ export function Thread() {
   };
 
   const chatStarted = !!threadId || !!messages.length;
+  const agentSelectionDisabled = isLoading || chatStarted;
   const hasNoAIOrToolMessages = !messages.find(
     (m) => m.type === "ai" || m.type === "tool",
   );
 
   const handleAgentChange = (agentId: string) => {
     setAgentMenuOpen(false);
+    if (agentSelectionDisabled) return;
     if (agentId === selectedAgentId) return;
     setSelectedAgentId(agentId);
     setThreadId(null);
   };
+
+  useEffect(() => {
+    if (agentSelectionDisabled) setAgentMenuOpen(false);
+  }, [agentSelectionDisabled]);
 
   useEffect(() => {
     if (!agentMenuOpen) return;
@@ -528,8 +534,11 @@ export function Thread() {
                             aria-label="Agent"
                             aria-haspopup="listbox"
                             aria-expanded={agentMenuOpen}
-                            disabled={isLoading}
-                            onClick={() => setAgentMenuOpen((open) => !open)}
+                            disabled={agentSelectionDisabled}
+                            onClick={() => {
+                              if (agentSelectionDisabled) return;
+                              setAgentMenuOpen((open) => !open);
+                            }}
                             className="flex h-9 items-center gap-1.5 border-none bg-transparent px-0 text-sm text-gray-700 shadow-none transition-colors outline-none hover:text-gray-950 focus-visible:text-gray-950 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <span>{selectedAgent?.name}</span>
