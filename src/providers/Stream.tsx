@@ -2,6 +2,7 @@ import React, {
   createContext,
   useContext,
   ReactNode,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -34,6 +35,11 @@ import {
   SessionAgent,
 } from "@/lib/auth";
 import { getThreadSearchMetadata } from "@/lib/thread-search-metadata";
+import {
+  installAuthFetchInterceptor,
+  logout,
+  refreshAccessToken,
+} from "@/lib/auth-client";
 
 export type StateType = { messages: Message[]; ui?: UIMessage[] };
 
@@ -185,6 +191,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
   const [session, setSession] = useState<AuthSession | null>(null);
   const [rememberedEmail, setRememberedEmail] = useState("");
   const [selectedAgentId, setSelectedAgentIdState] = useState("");
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     try {
@@ -210,10 +217,22 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
     }
   };
 
-  const refreshSession = async () => {
+  const clearFrontendAuthState = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+    setAuthenticated(false);
+    setSession(null);
+  }, []);
+
+  const refreshSession = useCallback(async () => {
     setSessionLoading(true);
     try {
-      const response = await fetch("/api/auth/session", { cache: "no-store" });
+      const response = await fetch("/api/auth/session", {
+        cache: "no-store",
+        credentials: "include",
+      });
       const payload = (await response.json()) as AuthSession;
       setSession(payload);
       setAuthenticated(Boolean(payload.authenticated));
@@ -241,16 +260,51 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
         });
       }
     } catch {
-      setAuthenticated(false);
-      setSession(null);
+      clearFrontendAuthState();
     } finally {
       setSessionLoading(false);
     }
-  };
+  }, [clearFrontendAuthState]);
 
   useEffect(() => {
     refreshSession().catch(console.error);
-  }, []);
+  }, [refreshSession]);
+
+  useEffect(() => {
+    installAuthFetchInterceptor();
+    window.addEventListener("auth:required", clearFrontendAuthState);
+    return () => {
+      window.removeEventListener("auth:required", clearFrontendAuthState);
+    };
+  }, [clearFrontendAuthState]);
+
+  useEffect(() => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+
+    if (!authenticated || !session?.expiresAt) return;
+
+    const refreshDelay = Math.max(session.expiresAt - Date.now() - 60000, 0);
+    refreshTimerRef.current = setTimeout(() => {
+      refreshAccessToken()
+        .then(() => refreshSession())
+        .catch(() => clearFrontendAuthState());
+    }, refreshDelay);
+
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+  }, [
+    authenticated,
+    clearFrontendAuthState,
+    refreshSession,
+    session?.expiresAt,
+  ]);
 
   const agents = session?.agents ?? [];
   const selectedAgent =
@@ -288,6 +342,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
 
               const response = await fetch("/api/auth/login", {
                 method: "POST",
+                credentials: "include",
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify({
                   email,
@@ -372,8 +427,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
           <Button
             variant="outline"
             onClick={async () => {
-              await fetch("/api/auth/logout", { method: "POST" });
-              window.location.reload();
+              await logout();
             }}
           >
             Sign out

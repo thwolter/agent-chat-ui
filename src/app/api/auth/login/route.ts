@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  appendGatewayRefreshCookies,
+  applyAccessTokenCookies,
+  buildAuthCookieOptions,
   AUTH_EMAIL_COOKIE,
-  AUTH_EXPIRES_AT_COOKIE,
-  AUTH_TOKEN_COOKIE,
-  AUTH_TOKEN_TYPE_COOKIE,
   AUTH_USER_ID_COOKIE,
   AUTH_USERNAME_COOKIE,
   getAuthBackendUrl,
+  type TokenResponse,
   withDirectPrefix,
 } from "@/lib/auth";
 
@@ -15,16 +16,6 @@ type LoginBody = {
   username?: string;
   password?: string;
 };
-
-function buildCookieOptions(maxAge?: number) {
-  return {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax" as const,
-    path: "/",
-    ...(maxAge ? { maxAge } : {}),
-  };
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -46,6 +37,7 @@ export async function POST(req: NextRequest) {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ email, password }),
+        credentials: "include",
       },
     );
 
@@ -63,11 +55,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const payload = (await loginResponse.json()) as {
-      access_token: string;
-      token_type?: string;
-      expires_in: number;
-    };
+    const payload = (await loginResponse.json()) as TokenResponse;
 
     if (!payload.access_token || !payload.expires_in) {
       return NextResponse.json(
@@ -77,7 +65,6 @@ export async function POST(req: NextRequest) {
     }
 
     const tokenType = (payload.token_type || "bearer").toLowerCase();
-    const expiresAt = Date.now() + payload.expires_in * 1000;
 
     let emailForCookie = email;
     let usernameForCookie = "";
@@ -118,37 +105,25 @@ export async function POST(req: NextRequest) {
       expiresIn: payload.expires_in,
     });
 
-    response.cookies.set(
-      AUTH_TOKEN_COOKIE,
-      payload.access_token,
-      buildCookieOptions(payload.expires_in),
-    );
-    response.cookies.set(
-      AUTH_TOKEN_TYPE_COOKIE,
-      tokenType,
-      buildCookieOptions(payload.expires_in),
-    );
-    response.cookies.set(AUTH_EXPIRES_AT_COOKIE, String(expiresAt), {
-      ...buildCookieOptions(payload.expires_in),
-      httpOnly: false,
-    });
+    applyAccessTokenCookies(response, payload);
+    appendGatewayRefreshCookies(response.headers, loginResponse.headers);
     if (userIdForCookie) {
       response.cookies.set(
         AUTH_USER_ID_COOKIE,
         userIdForCookie,
-        buildCookieOptions(payload.expires_in),
+        buildAuthCookieOptions(payload.expires_in),
       );
     }
     response.cookies.set(
       AUTH_EMAIL_COOKIE,
       emailForCookie,
-      buildCookieOptions(payload.expires_in),
+      buildAuthCookieOptions(payload.expires_in),
     );
     if (usernameForCookie) {
       response.cookies.set(
         AUTH_USERNAME_COOKIE,
         usernameForCookie,
-        buildCookieOptions(payload.expires_in),
+        buildAuthCookieOptions(payload.expires_in),
       );
     }
 
