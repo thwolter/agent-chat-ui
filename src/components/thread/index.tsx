@@ -51,6 +51,7 @@ import {
   ArtifactTitle,
   useArtifactContext,
 } from "./artifact";
+import { getContentString } from "./utils";
 
 function StickyToBottomContent(props: {
   content: ReactNode;
@@ -277,6 +278,15 @@ export function Thread() {
   const hasNoAIOrToolMessages = !messages.find(
     (m) => m.type === "ai" || m.type === "tool",
   );
+  const visibleMessages = messages.filter(
+    (m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX),
+  );
+  const lastVisibleMessage = visibleMessages[visibleMessages.length - 1];
+  const showLoadingMessage = isLoading && !firstTokenReceived;
+  const loadingAttachedToLastMessage =
+    showLoadingMessage &&
+    lastVisibleMessage?.type === "ai" &&
+    getContentString(lastVisibleMessage.content).length === 0;
 
   const handleAgentChange = (agentId: string) => {
     setAgentMenuOpen(false);
@@ -448,24 +458,27 @@ export function Thread() {
               contentClassName="pt-8 pb-16 max-w-3xl mx-auto flex flex-col gap-4 w-full"
               content={
                 <>
-                  {messages
-                    .filter((m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX))
-                    .map((message, index) =>
-                      message.type === "human" ? (
-                        <HumanMessage
-                          key={message.id || `${message.type}-${index}`}
-                          message={message}
-                          isLoading={isLoading}
-                        />
-                      ) : (
-                        <AssistantMessage
-                          key={message.id || `${message.type}-${index}`}
-                          message={message}
-                          isLoading={isLoading}
-                          handleRegenerate={handleRegenerate}
-                        />
-                      ),
-                    )}
+                  {visibleMessages.map((message, index) =>
+                    message.type === "human" ? (
+                      <HumanMessage
+                        key={message.id || `${message.type}-${index}`}
+                        message={message}
+                        isLoading={isLoading}
+                      />
+                    ) : (
+                      <AssistantMessage
+                        key={message.id || `${message.type}-${index}`}
+                        message={message}
+                        isLoading={isLoading}
+                        showLoading={
+                          loadingAttachedToLastMessage &&
+                          index === visibleMessages.length - 1
+                        }
+                        loadingStatus={stream.values.status}
+                        handleRegenerate={handleRegenerate}
+                      />
+                    ),
+                  )}
                   {/* Special rendering case where there are no AI/tool messages, but there is an interrupt.
                     We need to render it outside of the messages list, since there are no messages to render */}
                   {hasNoAIOrToolMessages && !!stream.interrupt && (
@@ -476,7 +489,7 @@ export function Thread() {
                       handleRegenerate={handleRegenerate}
                     />
                   )}
-                  {isLoading && !firstTokenReceived && (
+                  {showLoadingMessage && !loadingAttachedToLastMessage && (
                     <AssistantMessageLoading status={stream.values.status} />
                   )}
                 </>

@@ -102,10 +102,14 @@ function Interrupt({
 export function AssistantMessage({
   message,
   isLoading,
+  showLoading,
+  loadingStatus,
   handleRegenerate,
 }: {
   message: Message | undefined;
   isLoading: boolean;
+  showLoading?: boolean;
+  loadingStatus?: AssistantMessageLoadingStatus;
   handleRegenerate: (parentCheckpoint: Checkpoint | null | undefined) => void;
 }) {
   const content = message?.content ?? [];
@@ -141,6 +145,14 @@ export function AssistantMessage({
     );
   const hasAnthropicToolCalls = !!anthropicStreamedToolCalls?.length;
   const isToolResult = message?.type === "tool";
+  const customComponents = message ? (
+    <CustomComponent
+      message={message}
+      thread={thread}
+    />
+  ) : null;
+  const showLoadingStatus =
+    !!showLoading && !isToolResult && contentString.length === 0;
 
   if (isToolResult && hideToolCalls) {
     return null;
@@ -160,11 +172,13 @@ export function AssistantMessage({
           </>
         ) : (
           <>
-            {contentString.length > 0 && (
+            {showLoadingStatus ? (
+              <AssistantMessageLoading status={loadingStatus} />
+            ) : contentString.length > 0 ? (
               <div className="py-1">
                 <MarkdownText>{contentString}</MarkdownText>
               </div>
-            )}
+            ) : null}
 
             {!hideToolCalls && (
               <>
@@ -180,36 +194,33 @@ export function AssistantMessage({
               </>
             )}
 
-            {message && (
-              <CustomComponent
-                message={message}
-                thread={thread}
-              />
-            )}
+            {customComponents}
             <Interrupt
               interrupt={threadInterrupt}
               isLastMessage={isLastMessage}
               hasNoAIOrToolMessages={hasNoAIOrToolMessages}
             />
-            <div
-              className={cn(
-                "mr-auto flex items-center gap-2 transition-opacity",
-                "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100",
-              )}
-            >
-              <BranchSwitcher
-                branch={meta?.branch}
-                branchOptions={meta?.branchOptions}
-                onSelect={(branch) => thread.setBranch(branch)}
-                isLoading={isLoading}
-              />
-              <CommandBar
-                content={contentString}
-                isLoading={isLoading}
-                isAiMessage={true}
-                handleRegenerate={() => handleRegenerate(parentCheckpoint)}
-              />
-            </div>
+            {!showLoadingStatus && (
+              <div
+                className={cn(
+                  "mr-auto flex items-center gap-2 transition-opacity",
+                  "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100",
+                )}
+              >
+                <BranchSwitcher
+                  branch={meta?.branch}
+                  branchOptions={meta?.branchOptions}
+                  onSelect={(branch) => thread.setBranch(branch)}
+                  isLoading={isLoading}
+                />
+                <CommandBar
+                  content={contentString}
+                  isLoading={isLoading}
+                  isAiMessage={true}
+                  handleRegenerate={() => handleRegenerate(parentCheckpoint)}
+                />
+              </div>
+            )}
           </>
         )}
       </div>
