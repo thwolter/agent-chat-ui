@@ -108,13 +108,6 @@ const StreamSession = ({
   const { getThreads, setThreads } = useThreads();
   const assistantId = getAgentAssistantId(selectedAgent);
   const routeAgentId = getAgentRouteId(selectedAgent);
-  const initialThreadResetDone = useRef(false);
-
-  useEffect(() => {
-    if (initialThreadResetDone.current) return;
-    initialThreadResetDone.current = true;
-    setThreadId(null);
-  }, [setThreadId]);
 
   const streamValue = useTypedStream({
     apiUrl,
@@ -124,6 +117,7 @@ const StreamSession = ({
     },
     threadId: threadId ?? null,
     fetchStateHistory: true,
+    reconnectOnMount: true,
     onCustomEvent: (event, options) => {
       if (isUIMessage(event) || isRemoveUIMessage(event)) {
         options.mutate((prev) => {
@@ -149,6 +143,8 @@ const StreamSession = ({
             ) =>
               target.submit(values, {
                 ...options,
+                onDisconnect: options?.onDisconnect ?? "continue",
+                streamResumable: options?.streamResumable ?? true,
                 metadata: {
                   ...getThreadSearchMetadata(assistantId),
                   agent_id: selectedAgent.id,
