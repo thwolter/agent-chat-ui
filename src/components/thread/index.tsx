@@ -543,7 +543,7 @@ export function Thread() {
                             <div
                               role="listbox"
                               aria-labelledby="agent-select"
-                              className="bg-background absolute bottom-full left-0 z-20 mb-2 min-w-48 overflow-hidden rounded-md border shadow-lg"
+                              className="bg-background absolute top-full left-0 z-20 mt-2 max-h-[min(20rem,calc(100vh-12rem))] min-w-48 overflow-y-auto rounded-md border shadow-lg"
                             >
                               {agents.map((agent) => (
                                 <button
