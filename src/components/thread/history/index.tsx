@@ -1,8 +1,9 @@
 import { Button } from "@/components/ui/button";
+import { AssistantSettingsDialog } from "@/components/thread/assistant-settings";
 import { useAgentContext } from "@/providers/Stream";
 import { useThreads } from "@/providers/Thread";
 import { Thread } from "@langchain/langgraph-sdk";
-import { useEffect } from "react";
+import { RefObject, useEffect, useRef, useState } from "react";
 
 import { getContentString } from "../utils";
 import { useQueryState, parseAsBoolean } from "nuqs";
@@ -13,7 +14,13 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PanelRightOpen, PanelRightClose, LogOut } from "lucide-react";
+import {
+  PanelRightOpen,
+  PanelRightClose,
+  LogOut,
+  Settings,
+  UserPlus,
+} from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { toast } from "sonner";
 import { logout } from "@/lib/auth-client";
@@ -97,6 +104,10 @@ function ThreadHistoryLoading() {
 
 export default function ThreadHistory() {
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [assistantDialogOpen, setAssistantDialogOpen] = useState(false);
+  const desktopSettingsMenuRef = useRef<HTMLDivElement | null>(null);
+  const mobileSettingsMenuRef = useRef<HTMLDivElement | null>(null);
   const [chatHistoryOpen, setChatHistoryOpen] = useQueryState(
     "chatHistoryOpen",
     parseAsBoolean.withDefault(false),
@@ -122,8 +133,74 @@ export default function ThreadHistory() {
       .finally(() => setThreadsLoading(false));
   }, [getThreads, setThreads, setThreadsLoading]);
 
+  useEffect(() => {
+    if (!settingsOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      const isInDesktopMenu = desktopSettingsMenuRef.current?.contains(target);
+      const isInMobileMenu = mobileSettingsMenuRef.current?.contains(target);
+      if (!isInDesktopMenu && !isInMobileMenu) {
+        setSettingsOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSettingsOpen(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [settingsOpen]);
+
+  const renderSettingsMenu = (ref: RefObject<HTMLDivElement | null>) => (
+    <div
+      ref={ref}
+      className="relative"
+    >
+      <Button
+        variant="ghost"
+        className="gap-2 px-2"
+        onClick={() => setSettingsOpen((open) => !open)}
+        aria-label="Settings"
+        aria-haspopup="menu"
+        aria-expanded={settingsOpen}
+      >
+        <Settings className="size-4" />
+        Settings
+      </Button>
+      {settingsOpen && (
+        <div
+          role="menu"
+          className="bg-background absolute bottom-full left-0 z-30 mb-2 min-w-56 overflow-hidden rounded-md border shadow-lg"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-100"
+            onClick={() => {
+              setSettingsOpen(false);
+              setAssistantDialogOpen(true);
+            }}
+          >
+            <UserPlus className="size-4" />
+            Manage assistants
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <>
+      <AssistantSettingsDialog
+        open={assistantDialogOpen}
+        onOpenChange={setAssistantDialogOpen}
+      />
       <div className="shadow-inner-right hidden h-screen w-[300px] shrink-0 flex-col items-start justify-start border-r-[1px] border-slate-300 lg:flex">
         <div className="flex w-full items-center justify-between px-4 pt-1.5">
           <Button
@@ -148,10 +225,11 @@ export default function ThreadHistory() {
             <ThreadList threads={threads} />
           )}
         </div>
-        <div className="w-full border-t px-3 py-3">
+        <div className="flex w-full items-center justify-between gap-2 border-t px-3 py-3">
+          {renderSettingsMenu(desktopSettingsMenuRef)}
           <Button
             variant="ghost"
-            className="w-full justify-start gap-2"
+            className="justify-end gap-2 px-2"
             onClick={handleLogout}
           >
             <LogOut className="size-4" />
@@ -181,10 +259,11 @@ export default function ThreadHistory() {
                   onThreadClick={() => setChatHistoryOpen((o) => !o)}
                 />
               </div>
-              <div className="mt-3 border-t pt-3">
+              <div className="mt-3 flex items-center justify-between gap-2 border-t pt-3">
+                {renderSettingsMenu(mobileSettingsMenuRef)}
                 <Button
                   variant="ghost"
-                  className="w-full justify-start gap-2"
+                  className="justify-end gap-2 px-2"
                   onClick={handleLogout}
                 >
                   <LogOut className="size-4" />

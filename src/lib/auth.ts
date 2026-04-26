@@ -7,6 +7,7 @@ export const AUTH_EMAIL_COOKIE = "lg:auth:email";
 export const REMEMBERED_USERNAME_KEY = "lg:auth:remembered_username";
 export const REMEMBERED_EMAIL_KEY = "lg:auth:remembered_email";
 export const SELECTED_AGENT_ID_KEY = "lg:chat:selected_agent_id";
+export const CREATED_ASSISTANTS_KEY = "lg:chat:created_assistants";
 
 const FRONTEND_REFRESH_COOKIE_PATH = "/api";
 
@@ -32,6 +33,8 @@ export type SessionAgent = {
   url: string;
   assistant_id: string | null;
   graph_id: string | null;
+  route_agent_id?: string;
+  is_created_assistant?: boolean;
 };
 
 export type SessionUser = {
@@ -60,6 +63,10 @@ export function getAuthBackendUrl(): string {
 
 export function getAgentAssistantId(agent: SessionAgent): string {
   return agent.assistant_id || agent.graph_id || agent.key || agent.name;
+}
+
+export function getAgentRouteId(agent: SessionAgent): string {
+  return agent.route_agent_id || agent.id;
 }
 
 export function normalizeBackendUrl(input: string): string {

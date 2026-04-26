@@ -29,6 +29,7 @@ import { toast } from "sonner";
 import {
   AuthSession,
   getAgentAssistantId,
+  getAgentRouteId,
   REMEMBERED_EMAIL_KEY,
   REMEMBERED_USERNAME_KEY,
   SELECTED_AGENT_ID_KEY,
@@ -40,6 +41,10 @@ import {
   logout,
   refreshAccessToken,
 } from "@/lib/auth-client";
+import {
+  loadCreatedAssistants,
+  saveCreatedAssistants,
+} from "@/lib/created-assistants";
 
 export type StateType = { messages: Message[]; ui?: UIMessage[] };
 
@@ -60,9 +65,14 @@ const StreamContext = createContext<StreamContextType | undefined>(undefined);
 
 type AgentContextType = {
   agents: SessionAgent[];
+  baseAgents: SessionAgent[];
+  createdAssistants: SessionAgent[];
   selectedAgent: SessionAgent;
   selectedAgentId: string;
   setSelectedAgentId: (agentId: string) => void;
+  addCreatedAssistant: (assistant: SessionAgent) => void;
+  updateCreatedAssistant: (assistant: SessionAgent) => void;
+  removeCreatedAssistant: (assistantId: string) => void;
 };
 const AgentContext = createContext<AgentContextType | undefined>(undefined);
 
@@ -99,6 +109,7 @@ const StreamSession = ({
   const [threadId, setThreadId] = useQueryState("threadId");
   const { getThreads, setThreads } = useThreads();
   const assistantId = getAgentAssistantId(selectedAgent);
+  const routeAgentId = getAgentRouteId(selectedAgent);
   const initialThreadResetDone = useRef(false);
 
   useEffect(() => {
@@ -111,7 +122,7 @@ const StreamSession = ({
     apiUrl,
     assistantId,
     defaultHeaders: {
-      "x-agent-id": selectedAgent.id,
+      "x-agent-id": routeAgentId,
     },
     threadId: threadId ?? null,
     fetchStateHistory: true,
@@ -145,6 +156,7 @@ const StreamSession = ({
                   agent_id: selectedAgent.id,
                   agent_key: selectedAgent.key,
                   agent_name: selectedAgent.name,
+                  route_agent_id: routeAgentId,
                   ...(options?.metadata ?? {}),
                 },
               });
@@ -153,11 +165,11 @@ const StreamSession = ({
           return Reflect.get(target, prop, receiver);
         },
       }),
-    [assistantId, selectedAgent, streamValue],
+    [assistantId, routeAgentId, selectedAgent, streamValue],
   );
 
   useEffect(() => {
-    checkGraphStatus(apiUrl, selectedAgent.id).then((ok) => {
+    checkGraphStatus(apiUrl, routeAgentId).then((ok) => {
       if (!ok) {
         toast.error("Failed to connect to gateway proxy", {
           description: () => (
@@ -172,7 +184,7 @@ const StreamSession = ({
         });
       }
     });
-  }, [apiUrl, selectedAgent.id]);
+  }, [apiUrl, routeAgentId]);
 
   return (
     <StreamContext.Provider value={streamValueWithMetadata}>
@@ -189,6 +201,9 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
   const [sessionLoading, setSessionLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(null);
+  const [createdAssistants, setCreatedAssistants] = useState<SessionAgent[]>(
+    [],
+  );
   const [rememberedEmail, setRememberedEmail] = useState("");
   const [selectedAgentId, setSelectedAgentIdState] = useState("");
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -236,10 +251,24 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
       const payload = (await response.json()) as AuthSession;
       setSession(payload);
       setAuthenticated(Boolean(payload.authenticated));
+      setCreatedAssistants(
+        payload.authenticated ? loadCreatedAssistants(payload.user?.id) : [],
+      );
 
-      if (payload.agents.length) {
+      const selectableAgents = [
+        ...payload.agents,
+        ...(payload.authenticated
+          ? loadCreatedAssistants(payload.user?.id).filter((assistant) =>
+              payload.agents.some(
+                (agent) => agent.id === getAgentRouteId(assistant),
+              ),
+            )
+          : []),
+      ];
+
+      if (selectableAgents.length) {
         setSelectedAgentIdState((current) => {
-          if (payload.agents.some((agent) => agent.id === current)) {
+          if (selectableAgents.some((agent) => agent.id === current)) {
             return current;
           }
           let rememberedAgentId: string | null = null;
@@ -252,11 +281,11 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
           }
           if (
             rememberedAgentId &&
-            payload.agents.some((agent) => agent.id === rememberedAgentId)
+            selectableAgents.some((agent) => agent.id === rememberedAgentId)
           ) {
             return rememberedAgentId;
           }
-          return payload.agents[0].id;
+          return selectableAgents[0].id;
         });
       }
     } catch {
@@ -306,7 +335,73 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
     session?.expiresAt,
   ]);
 
-  const agents = session?.agents ?? [];
+  const baseAgents = useMemo(() => session?.agents ?? [], [session?.agents]);
+  const agents = useMemo(() => {
+    const allowedRouteIds = new Set(baseAgents.map((agent) => agent.id));
+    const filteredCreatedAssistants = createdAssistants.filter((assistant) =>
+      allowedRouteIds.has(getAgentRouteId(assistant)),
+    );
+    const seen = new Set<string>();
+    return [...baseAgents, ...filteredCreatedAssistants].filter((agent) => {
+      if (seen.has(agent.id)) return false;
+      seen.add(agent.id);
+      return true;
+    });
+  }, [baseAgents, createdAssistants]);
+
+  const addCreatedAssistant = useCallback(
+    (assistant: SessionAgent) => {
+      setCreatedAssistants((current) => {
+        const next = [
+          assistant,
+          ...current.filter((item) => item.id !== assistant.id),
+        ];
+        saveCreatedAssistants(next, session?.user?.id);
+        return next;
+      });
+      setSelectedAgentId(assistant.id);
+    },
+    [session?.user?.id],
+  );
+
+  const updateCreatedAssistant = useCallback(
+    (assistant: SessionAgent) => {
+      setCreatedAssistants((current) => {
+        const next = current.map((item) =>
+          item.id === assistant.id ? assistant : item,
+        );
+        saveCreatedAssistants(next, session?.user?.id);
+        return next;
+      });
+    },
+    [session?.user?.id],
+  );
+
+  const removeCreatedAssistant = useCallback(
+    (assistantId: string) => {
+      setCreatedAssistants((current) => {
+        const next = current.filter((item) => item.id !== assistantId);
+        saveCreatedAssistants(next, session?.user?.id);
+        return next;
+      });
+      setSelectedAgentIdState((currentSelectedAgentId) => {
+        if (currentSelectedAgentId !== assistantId) return currentSelectedAgentId;
+        const fallbackAgentId = baseAgents[0]?.id ?? "";
+        try {
+          if (fallbackAgentId) {
+            window.localStorage.setItem(SELECTED_AGENT_ID_KEY, fallbackAgentId);
+          } else {
+            window.localStorage.removeItem(SELECTED_AGENT_ID_KEY);
+          }
+        } catch {
+          // no-op
+        }
+        return fallbackAgentId;
+      });
+    },
+    [baseAgents, session?.user?.id],
+  );
+
   const selectedAgent =
     agents.find((agent) => agent.id === selectedAgentId) ?? agents[0];
 
@@ -441,9 +536,14 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
     <AgentContext.Provider
       value={{
         agents,
+        baseAgents,
+        createdAssistants,
         selectedAgent,
         selectedAgentId: selectedAgent.id,
         setSelectedAgentId,
+        addCreatedAssistant,
+        updateCreatedAssistant,
+        removeCreatedAssistant,
       }}
     >
       <StreamSession

@@ -559,7 +559,16 @@ export function Thread() {
                                       : "text-gray-700",
                                   )}
                                 >
-                                  <span className="truncate">{agent.name}</span>
+                                  <span className="flex min-w-0 flex-col">
+                                    <span className="truncate">
+                                      {agent.name}
+                                    </span>
+                                    {agent.is_created_assistant && (
+                                      <span className="text-muted-foreground truncate text-xs">
+                                        Assistant
+                                      </span>
+                                    )}
+                                  </span>
                                   {agent.id === selectedAgentId && (
                                     <Check className="size-4 shrink-0 text-gray-700" />
                                   )}
