@@ -19,12 +19,25 @@ function getCookieHeader(req: NextRequest): string {
   return req.headers.get("cookie") ?? "";
 }
 
-async function callRefresh(cookieHeader: string): Promise<RefreshResult> {
+function buildRefreshHeaders(
+  cookieHeader: string,
+  authorizationHeader: string | null,
+): HeadersInit | undefined {
+  const headers: Record<string, string> = {};
+  if (cookieHeader) headers.cookie = cookieHeader;
+  if (authorizationHeader) headers.authorization = authorizationHeader;
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+async function callRefresh(
+  cookieHeader: string,
+  authorizationHeader: string | null,
+): Promise<RefreshResult> {
   const response = await fetch(
     withDirectPrefix(getAuthBackendUrl(), "/auth/refresh"),
     {
       method: "POST",
-      headers: cookieHeader ? { cookie: cookieHeader } : undefined,
+      headers: buildRefreshHeaders(cookieHeader, authorizationHeader),
       credentials: "include",
       cache: "no-store",
     },
@@ -49,11 +62,15 @@ export async function refreshAccessToken(
   req: NextRequest,
 ): Promise<RefreshResult> {
   const cookieHeader = getCookieHeader(req);
-  const key = cookieHeader || "__anonymous__";
+  const authorizationHeader = req.headers.get("authorization");
+  const key =
+    cookieHeader || authorizationHeader
+      ? `${cookieHeader}\n${authorizationHeader ?? ""}`
+      : "__anonymous__";
   const existing = refreshPromises.get(key);
   if (existing) return existing;
 
-  const promise = callRefresh(cookieHeader).finally(() => {
+  const promise = callRefresh(cookieHeader, authorizationHeader).finally(() => {
     refreshPromises.delete(key);
   });
   refreshPromises.set(key, promise);
