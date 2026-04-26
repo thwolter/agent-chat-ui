@@ -24,7 +24,7 @@ import { Label } from "@/components/ui/label";
 import { ArrowRight } from "lucide-react";
 import { PasswordInput } from "@/components/ui/password-input";
 import { useThreads } from "./Thread";
-import { resolveApiUrl } from "./client";
+import { createClient, resolveApiUrl } from "./client";
 import { toast } from "sonner";
 import {
   AuthSession,
@@ -42,6 +42,7 @@ import {
   refreshAccessToken,
 } from "@/lib/auth-client";
 import {
+  createAssistantAgent,
   loadCreatedAssistants,
   saveCreatedAssistants,
 } from "@/lib/created-assistants";
@@ -95,6 +96,54 @@ async function checkGraphStatus(
     console.error(e);
     return false;
   }
+}
+
+async function loadBackendCreatedAssistants(
+  apiProxyUrl: string,
+  baseAgents: SessionAgent[],
+  userId?: string,
+): Promise<SessionAgent[]> {
+  const cachedAssistants = loadCreatedAssistants(userId);
+  if (!baseAgents.length) return [];
+
+  const assistantGroups = await Promise.allSettled(
+    baseAgents.map(async (baseAgent) => {
+      const client = createClient(apiProxyUrl, undefined, undefined, {
+        "x-agent-id": baseAgent.id,
+      });
+      const assistants = await client.assistants.search({
+        metadata: {
+          created_from_chat_ui: true,
+          base_agent_id: baseAgent.id,
+        },
+        limit: 100,
+      });
+
+      return assistants.map((assistant) =>
+        createAssistantAgent(baseAgent, assistant),
+      );
+    }),
+  );
+
+  const loadedAssistants = assistantGroups.flatMap((result) =>
+    result.status === "fulfilled" ? result.value : [],
+  );
+
+  if (!loadedAssistants.length && cachedAssistants.length) {
+    return cachedAssistants.filter((assistant) =>
+      baseAgents.some((agent) => agent.id === getAgentRouteId(assistant)),
+    );
+  }
+
+  const seen = new Set<string>();
+  const dedupedAssistants = loadedAssistants.filter((assistant) => {
+    if (seen.has(assistant.id)) return false;
+    seen.add(assistant.id);
+    return true;
+  });
+
+  saveCreatedAssistants(dedupedAssistants, userId);
+  return dedupedAssistants;
 }
 
 const StreamSession = ({
@@ -251,19 +300,22 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
       const payload = (await response.json()) as AuthSession;
       setSession(payload);
       setAuthenticated(Boolean(payload.authenticated));
-      setCreatedAssistants(
-        payload.authenticated ? loadCreatedAssistants(payload.user?.id) : [],
-      );
+      const nextCreatedAssistants = payload.authenticated
+        ? await loadBackendCreatedAssistants(
+            apiProxyUrl,
+            payload.agents,
+            payload.user?.id,
+          )
+        : [];
+      setCreatedAssistants(nextCreatedAssistants);
 
       const selectableAgents = [
         ...payload.agents,
-        ...(payload.authenticated
-          ? loadCreatedAssistants(payload.user?.id).filter((assistant) =>
-              payload.agents.some(
-                (agent) => agent.id === getAgentRouteId(assistant),
-              ),
-            )
-          : []),
+        ...nextCreatedAssistants.filter((assistant) =>
+          payload.agents.some(
+            (agent) => agent.id === getAgentRouteId(assistant),
+          ),
+        ),
       ];
 
       if (selectableAgents.length) {
@@ -293,7 +345,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
     } finally {
       setSessionLoading(false);
     }
-  }, [clearFrontendAuthState]);
+  }, [apiProxyUrl, clearFrontendAuthState]);
 
   useEffect(() => {
     refreshSession().catch(console.error);
@@ -385,7 +437,8 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
         return next;
       });
       setSelectedAgentIdState((currentSelectedAgentId) => {
-        if (currentSelectedAgentId !== assistantId) return currentSelectedAgentId;
+        if (currentSelectedAgentId !== assistantId)
+          return currentSelectedAgentId;
         const fallbackAgentId = baseAgents[0]?.id ?? "";
         try {
           if (fallbackAgentId) {
