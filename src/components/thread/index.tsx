@@ -2,7 +2,11 @@ import { v4 as uuidv4 } from "uuid";
 import { ReactNode, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { useAgentContext, useStreamContext } from "@/providers/Stream";
+import {
+  RUN_STATUS_CHANGED_EVENT,
+  useAgentContext,
+  useStreamContext,
+} from "@/providers/Stream";
 import { useState, FormEvent } from "react";
 import { Button } from "../ui/button";
 import { Checkpoint, Message } from "@langchain/langgraph-sdk";
@@ -188,6 +192,18 @@ export function Thread() {
 
   // TODO: this should be part of the useStream hook
   const prevMessageLength = useRef(0);
+
+  useEffect(() => {
+    const markStatusChanged = () => {
+      setFirstTokenReceived(false);
+    };
+
+    window.addEventListener(RUN_STATUS_CHANGED_EVENT, markStatusChanged);
+    return () => {
+      window.removeEventListener(RUN_STATUS_CHANGED_EVENT, markStatusChanged);
+    };
+  }, []);
+
   useEffect(() => {
     if (
       messages.length !== prevMessageLength.current &&
@@ -223,7 +239,7 @@ export function Thread() {
     stream.submit(
       { messages: [...toolMessages, newHumanMessage], context },
       {
-        streamMode: ["values"],
+        streamMode: ["values", "custom"],
         streamSubgraphs: true,
         streamResumable: true,
         optimisticValues: (prev) => ({
@@ -250,7 +266,7 @@ export function Thread() {
     setFirstTokenReceived(false);
     stream.submit(undefined, {
       checkpoint: parentCheckpoint,
-      streamMode: ["values"],
+      streamMode: ["values", "custom"],
       streamSubgraphs: true,
       streamResumable: true,
     });
@@ -461,7 +477,7 @@ export function Thread() {
                     />
                   )}
                   {isLoading && !firstTokenReceived && (
-                    <AssistantMessageLoading />
+                    <AssistantMessageLoading status={stream.values.status} />
                   )}
                 </>
               }

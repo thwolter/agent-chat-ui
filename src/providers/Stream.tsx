@@ -44,7 +44,44 @@ import {
 import { saveCreatedAssistants } from "@/lib/created-assistants";
 import { loadBackendCreatedAssistants } from "@/lib/backend-created-assistants";
 
-export type StateType = { messages: Message[]; ui?: UIMessage[] };
+export type RunStatusEvent = {
+  type: "status";
+  stage: string;
+  message: string;
+};
+
+export type StateType = {
+  messages: Message[];
+  ui?: UIMessage[];
+  status?: RunStatusEvent;
+};
+
+function parseRunStatusEvent(event: unknown): RunStatusEvent | null {
+  if (typeof event === "string") {
+    try {
+      return parseRunStatusEvent(JSON.parse(event));
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof event !== "object" || event === null) return null;
+
+  const payload = event as Record<string, unknown>;
+  if (
+    payload.type === "status" &&
+    typeof payload.stage === "string" &&
+    typeof payload.message === "string"
+  ) {
+    return {
+      type: "status",
+      stage: payload.stage,
+      message: payload.message,
+    };
+  }
+
+  return null;
+}
 
 const useTypedStream = useStream<
   StateType,
@@ -54,7 +91,7 @@ const useTypedStream = useStream<
       ui?: (UIMessage | RemoveUIMessage)[] | UIMessage | RemoveUIMessage;
       context?: Record<string, unknown>;
     };
-    CustomEventType: UIMessage | RemoveUIMessage;
+    CustomEventType: UIMessage | RemoveUIMessage | RunStatusEvent;
   }
 >;
 
@@ -73,6 +110,8 @@ type AgentContextType = {
   removeCreatedAssistant: (assistantId: string) => void;
 };
 const AgentContext = createContext<AgentContextType | undefined>(undefined);
+
+export const RUN_STATUS_CHANGED_EVENT = "run-status:changed";
 
 async function sleep(ms = 4000) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -108,6 +147,7 @@ const StreamSession = ({
   const { getThreads, setThreads } = useThreads();
   const assistantId = getAgentAssistantId(selectedAgent);
   const routeAgentId = getAgentRouteId(selectedAgent);
+  const [runStatus, setRunStatus] = useState<RunStatusEvent | undefined>();
 
   const streamValue = useTypedStream({
     apiUrl,
@@ -124,6 +164,12 @@ const StreamSession = ({
           const ui = uiMessageReducer(prev.ui ?? [], event);
           return { ...prev, ui };
         });
+      } else {
+        const status = parseRunStatusEvent(event);
+        if (status) {
+          setRunStatus(status);
+          window.dispatchEvent(new CustomEvent(RUN_STATUS_CHANGED_EVENT));
+        }
       }
     },
     onThreadId: (id) => {
@@ -136,11 +182,20 @@ const StreamSession = ({
     () =>
       new Proxy(streamValue, {
         get(target, prop, receiver) {
+          if (prop === "values") {
+            return {
+              ...target.values,
+              status: runStatus,
+            };
+          }
+
           if (prop === "submit") {
             return (
               values: Parameters<typeof target.submit>[0],
               options?: Parameters<typeof target.submit>[1],
-            ) =>
+            ) => {
+              setRunStatus(undefined);
+              window.dispatchEvent(new CustomEvent(RUN_STATUS_CHANGED_EVENT));
               target.submit(values, {
                 ...options,
                 onDisconnect: options?.onDisconnect ?? "continue",
@@ -154,12 +209,13 @@ const StreamSession = ({
                   ...(options?.metadata ?? {}),
                 },
               });
+            };
           }
 
           return Reflect.get(target, prop, receiver);
         },
       }),
-    [assistantId, routeAgentId, selectedAgent, streamValue],
+    [assistantId, routeAgentId, runStatus, selectedAgent, streamValue],
   );
 
   useEffect(() => {

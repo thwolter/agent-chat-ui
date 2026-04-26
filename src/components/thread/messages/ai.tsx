@@ -14,6 +14,7 @@ import { ThreadView } from "../agent-inbox";
 import { useQueryState, parseAsBoolean } from "nuqs";
 import { GenericInterruptView } from "./generic-interrupt";
 import { useArtifact } from "../artifact";
+import { Loader2 } from "lucide-react";
 
 function CustomComponent({
   message,
@@ -216,14 +217,34 @@ export function AssistantMessage({
   );
 }
 
-export function AssistantMessageLoading() {
+type AssistantMessageLoadingStatus = {
+  stage: string;
+  message: string;
+};
+
+export function AssistantMessageLoading({
+  status,
+}: {
+  status?: AssistantMessageLoadingStatus;
+}) {
+  const isProcessing = status?.stage === "processing";
+  const showSpinner = !status || isProcessing;
+  const label = status
+    ? isProcessing
+      ? `${status.message}...`
+      : status.message
+    : "Thinking...";
+
   return (
-    <div className="mr-auto flex items-start gap-2">
-      <div className="bg-muted flex h-8 items-center gap-1 rounded-2xl px-4 py-2">
-        <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_infinite] rounded-full"></div>
-        <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_0.5s_infinite] rounded-full"></div>
-        <div className="bg-foreground/50 h-1.5 w-1.5 animate-[pulse_1.5s_ease-in-out_1s_infinite] rounded-full"></div>
-      </div>
+    <div className="text-muted-foreground mr-auto inline-flex max-w-full items-center gap-2 px-1 text-sm leading-5">
+      {showSpinner && (
+        <Loader2
+          className={`size-4 shrink-0 ${showSpinner ? "animate-spin opacity-100" : "opacity-0"}`}
+        />
+      )}
+      <span className="inline-block max-w-[min(36rem,80vw)] truncate align-baseline leading-5 whitespace-nowrap">
+        {label}
+      </span>
     </div>
   );
 }

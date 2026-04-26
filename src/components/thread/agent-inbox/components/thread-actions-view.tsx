@@ -181,6 +181,7 @@ export function ThreadActionsView({
           command: {
             resume: { decisions: allDecisions },
           },
+          streamMode: ["values", "custom"],
         },
       );
 
@@ -228,6 +229,7 @@ export function ThreadActionsView({
           command: {
             resume: { decisions: allDecisions },
           },
+          streamMode: ["values", "custom"],
         },
       );
 

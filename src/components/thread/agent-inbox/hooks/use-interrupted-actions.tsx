@@ -94,6 +94,7 @@ export default function useInterruptedActions({
               decisions,
             },
           },
+          streamMode: ["values", "custom"],
         },
       );
       return true;
@@ -194,6 +195,7 @@ export default function useInterruptedActions({
           command: {
             goto: END,
           },
+          streamMode: ["values", "custom"],
         },
       );
 

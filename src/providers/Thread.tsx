@@ -55,6 +55,24 @@ function resolveThreadAgent(
   );
 }
 
+function getThreadListKey(thread: Thread): string {
+  const agentId =
+    typeof thread.metadata?.agent_id === "string"
+      ? thread.metadata.agent_id
+      : "unknown";
+  return `${agentId}:${thread.thread_id}`;
+}
+
+function dedupeThreads(threads: Thread[]): Thread[] {
+  const seen = new Set<string>();
+  return threads.filter((thread) => {
+    const key = getThreadListKey(thread);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function ThreadProvider({ children }: { children: ReactNode }) {
   const apiProxyUrl = process.env.NEXT_PUBLIC_API_PROXY_URL || "/api";
 
@@ -106,14 +124,13 @@ export function ThreadProvider({ children }: { children: ReactNode }) {
       }),
     );
 
-    return threadGroups
-      .flat()
-      .sort((a, b) => {
-        const aUpdated = new Date(a.updated_at ?? 0).getTime();
-        const bUpdated = new Date(b.updated_at ?? 0).getTime();
-        return bUpdated - aUpdated;
-      })
-      .slice(0, 100);
+    const sortedThreads = threadGroups.flat().sort((a, b) => {
+      const aUpdated = new Date(a.updated_at ?? 0).getTime();
+      const bUpdated = new Date(b.updated_at ?? 0).getTime();
+      return bUpdated - aUpdated;
+    });
+
+    return dedupeThreads(sortedThreads).slice(0, 100);
   }, [apiProxyUrl]);
 
   const value = {
