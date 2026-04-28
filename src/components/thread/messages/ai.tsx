@@ -239,12 +239,14 @@ export function AssistantMessageLoading({
   status?: AssistantMessageLoadingStatus;
 }) {
   const isProcessing = status?.stage === "processing";
-  const showSpinner = !status || isProcessing;
-  const label = status
-    ? isProcessing
-      ? `${status.message}...`
-      : status.message
-    : "Thinking...";
+  const statusMessage = status?.message.trim();
+  const showFallback = !statusMessage;
+  const showSpinner = !status || isProcessing || showFallback;
+  const label = showFallback
+    ? "Thinking..."
+    : isProcessing
+      ? `${statusMessage}...`
+      : statusMessage;
 
   return (
     <div className="text-muted-foreground mr-auto inline-flex max-w-full items-center gap-2 px-1 text-sm leading-5">

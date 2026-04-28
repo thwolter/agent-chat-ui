@@ -94,6 +94,42 @@ function ScrollToBottom(props: { className?: string }) {
   );
 }
 
+function isToolCallRequest(message: Message) {
+  return (
+    message.type === "ai" &&
+    "tool_calls" in message &&
+    Array.isArray(message.tool_calls) &&
+    message.tool_calls.length > 0
+  );
+}
+
+function isHiddenToolMessage(message: Message, hideToolCalls: boolean) {
+  return (
+    hideToolCalls && (message.type === "tool" || isToolCallRequest(message))
+  );
+}
+
+function hasVisibleAssistantContent(message: Message, hideToolCalls: boolean) {
+  return (
+    message.type === "ai" &&
+    (getContentString(message.content).length > 0 ||
+      (!hideToolCalls && isToolCallRequest(message)))
+  );
+}
+
+function getLastRenderableMessage(messages: Message[], hideToolCalls: boolean) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (
+      !message.id?.startsWith(DO_NOT_RENDER_ID_PREFIX) &&
+      !isHiddenToolMessage(message, hideToolCalls)
+    ) {
+      return message;
+    }
+  }
+  return undefined;
+}
+
 function OpenGitHubRepo() {
   return (
     <TooltipProvider>
@@ -206,16 +242,21 @@ export function Thread() {
   }, []);
 
   useEffect(() => {
+    const lastRenderableMessage = getLastRenderableMessage(
+      messages,
+      hideToolCalls ?? false,
+    );
+
     if (
       messages.length !== prevMessageLength.current &&
-      messages?.length &&
-      messages[messages.length - 1].type === "ai"
+      lastRenderableMessage &&
+      hasVisibleAssistantContent(lastRenderableMessage, hideToolCalls ?? false)
     ) {
       setFirstTokenReceived(true);
     }
 
     prevMessageLength.current = messages.length;
-  }, [messages]);
+  }, [hideToolCalls, messages]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -279,7 +320,9 @@ export function Thread() {
     (m) => m.type === "ai" || m.type === "tool",
   );
   const visibleMessages = messages.filter(
-    (m) => !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX),
+    (m) =>
+      !m.id?.startsWith(DO_NOT_RENDER_ID_PREFIX) &&
+      !isHiddenToolMessage(m, hideToolCalls ?? false),
   );
   const lastVisibleMessage = visibleMessages[visibleMessages.length - 1];
   const showLoadingMessage = isLoading && !firstTokenReceived;
