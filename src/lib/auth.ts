@@ -10,6 +10,7 @@ export const SELECTED_AGENT_ID_KEY = "lg:chat:selected_agent_id";
 export const CREATED_ASSISTANTS_KEY = "lg:chat:created_assistants";
 
 const FRONTEND_REFRESH_COOKIE_PATH = "/api";
+const DEFAULT_GATEWAY_REFRESH_COOKIE = "lgsg_refresh_token";
 
 type AuthCookieOptions = {
   httpOnly?: boolean;
@@ -59,6 +60,14 @@ export function getAuthBackendUrl(): string {
     "http://localhost:8000";
 
   return normalizeBackendUrl(backendUrl);
+}
+
+export function getGatewayRefreshCookieName(): string {
+  return (
+    process.env.AUTH_REFRESH_COOKIE_NAME ||
+    process.env.NEXT_PUBLIC_AUTH_REFRESH_COOKIE_NAME ||
+    DEFAULT_GATEWAY_REFRESH_COOKIE
+  );
 }
 
 export function getAgentAssistantId(agent: SessionAgent): string {
@@ -153,6 +162,20 @@ export function clearAuthCookies(response: {
   response.cookies.delete(AUTH_EMAIL_COOKIE);
 }
 
+export function clearGatewayRefreshCookie(response: {
+  cookies: {
+    set: (name: string, value: string, options?: AuthCookieOptions) => void;
+  };
+}) {
+  response.cookies.set(getGatewayRefreshCookieName(), "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: FRONTEND_REFRESH_COOKIE_PATH,
+    maxAge: 0,
+  });
+}
+
 function splitSetCookieHeader(header: string): string[] {
   const cookies: string[] = [];
   let start = 0;
@@ -209,7 +232,11 @@ export function appendGatewayRefreshCookies(
       .filter(Boolean);
     if (parts.length === 0) continue;
 
-    const rewritten = [parts[0]];
+    const [cookiePair] = parts;
+    const [cookieName] = cookiePair.split("=", 1);
+    if (cookieName !== getGatewayRefreshCookieName()) continue;
+
+    const rewritten = [cookiePair];
     let hasPath = false;
 
     for (const attribute of parts.slice(1)) {

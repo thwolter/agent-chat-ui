@@ -3,6 +3,7 @@ import {
   appendGatewayRefreshCookies,
   applyAccessTokenCookies,
   clearAuthCookies,
+  clearGatewayRefreshCookie,
   getAuthBackendUrl,
   type TokenResponse,
   withDirectPrefix,
@@ -14,6 +15,16 @@ type RefreshResult = {
 };
 
 const refreshPromises = new Map<string, Promise<RefreshResult>>();
+
+export class RefreshAccessTokenError extends Error {
+  constructor(
+    message: string,
+    readonly headers?: Headers,
+  ) {
+    super(message);
+    this.name = "RefreshAccessTokenError";
+  }
+}
 
 function getCookieHeader(req: NextRequest): string {
   return req.headers.get("cookie") ?? "";
@@ -44,7 +55,7 @@ async function callRefresh(
   );
 
   if (!response.ok) {
-    throw new Error("Refresh failed");
+    throw new RefreshAccessTokenError("Refresh failed", response.headers);
   }
 
   const payload = (await response.json()) as TokenResponse;
@@ -88,8 +99,13 @@ export function applyRefreshResult(
 export function clearAuthStateResponse(
   body: Record<string, unknown>,
   status = 401,
+  gatewayHeaders?: Headers,
 ) {
   const response = NextResponse.json(body, { status });
   clearAuthCookies(response);
+  clearGatewayRefreshCookie(response);
+  if (gatewayHeaders) {
+    appendGatewayRefreshCookies(response.headers, gatewayHeaders);
+  }
   return response;
 }

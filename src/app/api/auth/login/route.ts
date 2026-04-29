@@ -106,7 +106,6 @@ export async function POST(req: NextRequest) {
     });
 
     applyAccessTokenCookies(response, payload);
-    appendGatewayRefreshCookies(response.headers, loginResponse.headers);
     if (userIdForCookie) {
       response.cookies.set(
         AUTH_USER_ID_COOKIE,
@@ -126,6 +125,7 @@ export async function POST(req: NextRequest) {
         buildAuthCookieOptions(payload.expires_in),
       );
     }
+    appendGatewayRefreshCookies(response.headers, loginResponse.headers);
 
     return response;
   } catch (error) {

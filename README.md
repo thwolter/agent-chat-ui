@@ -88,6 +88,10 @@ LANGGRAPH_API_URL=http://localhost:8123
 
 # Optional server-side fallback token (service mode).
 LANGGRAPH_BEARER_TOKEN=
+
+# Optional gateway refresh cookie name. Must match the gateway's
+# REFRESH_COOKIE_NAME when customized.
+AUTH_REFRESH_COOKIE_NAME=lgsg_refresh_token
 ```
 
 ## Hiding Messages in the Chat

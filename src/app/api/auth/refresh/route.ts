@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import {
   applyRefreshResult,
   clearAuthStateResponse,
+  RefreshAccessTokenError,
   refreshAccessToken,
 } from "@/lib/auth-server";
 
@@ -14,7 +15,11 @@ export async function POST(req: NextRequest) {
     });
     applyRefreshResult(response, refreshResult);
     return response;
-  } catch {
-    return clearAuthStateResponse({ error: "Authentication refresh failed." });
+  } catch (error) {
+    return clearAuthStateResponse(
+      { error: "Authentication refresh failed." },
+      401,
+      error instanceof RefreshAccessTokenError ? error.headers : undefined,
+    );
   }
 }

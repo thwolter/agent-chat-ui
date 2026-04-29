@@ -4,6 +4,7 @@ import {
   AUTH_TOKEN_COOKIE,
   AUTH_TOKEN_TYPE_COOKIE,
   clearAuthCookies,
+  clearGatewayRefreshCookie,
   getAuthBackendUrl,
   type TokenResponse,
   withDirectPrefix,
@@ -30,6 +31,7 @@ function unauthenticatedResponse(expiresAt?: string | null) {
     agents: [],
   });
   clearAuthCookies(response);
+  clearGatewayRefreshCookie(response);
   return response;
 }
 

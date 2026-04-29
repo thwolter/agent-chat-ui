@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import {
   appendGatewayRefreshCookies,
   clearAuthCookies,
+  clearGatewayRefreshCookie,
   getAuthBackendUrl,
   withDirectPrefix,
 } from "@/lib/auth";
@@ -31,6 +32,7 @@ export async function POST(req: NextRequest) {
 
   const response = NextResponse.json({ ok: true });
   clearAuthCookies(response);
+  clearGatewayRefreshCookie(response);
   if (logoutHeaders) {
     appendGatewayRefreshCookies(response.headers, logoutHeaders);
   }
