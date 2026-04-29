@@ -291,62 +291,66 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
     setSession(null);
   }, []);
 
-  const refreshSession = useCallback(async () => {
-    setSessionLoading(true);
-    try {
-      const response = await fetch("/api/auth/session", {
-        cache: "no-store",
-        credentials: "include",
-      });
-      const payload = (await response.json()) as AuthSession;
-      setSession(payload);
-      setAuthenticated(Boolean(payload.authenticated));
-      const nextCreatedAssistants = payload.authenticated
-        ? await loadBackendCreatedAssistants(
-            apiProxyUrl,
-            payload.agents,
-            payload.user?.id,
-          )
-        : [];
-      setCreatedAssistants(nextCreatedAssistants);
-
-      const selectableAgents = [
-        ...payload.agents,
-        ...nextCreatedAssistants.filter((assistant) =>
-          payload.agents.some(
-            (agent) => agent.id === getAgentRouteId(assistant),
-          ),
-        ),
-      ];
-
-      if (selectableAgents.length) {
-        setSelectedAgentIdState((current) => {
-          if (selectableAgents.some((agent) => agent.id === current)) {
-            return current;
-          }
-          let rememberedAgentId: string | null = null;
-          try {
-            rememberedAgentId = window.localStorage.getItem(
-              SELECTED_AGENT_ID_KEY,
-            );
-          } catch {
-            // no-op
-          }
-          if (
-            rememberedAgentId &&
-            selectableAgents.some((agent) => agent.id === rememberedAgentId)
-          ) {
-            return rememberedAgentId;
-          }
-          return selectableAgents[0].id;
+  const refreshSession = useCallback(
+    async (options?: { loading?: boolean }) => {
+      const showLoading = options?.loading ?? true;
+      if (showLoading) setSessionLoading(true);
+      try {
+        const response = await fetch("/api/auth/session", {
+          cache: "no-store",
+          credentials: "include",
         });
+        const payload = (await response.json()) as AuthSession;
+        setSession(payload);
+        setAuthenticated(Boolean(payload.authenticated));
+        const nextCreatedAssistants = payload.authenticated
+          ? await loadBackendCreatedAssistants(
+              apiProxyUrl,
+              payload.agents,
+              payload.user?.id,
+            )
+          : [];
+        setCreatedAssistants(nextCreatedAssistants);
+
+        const selectableAgents = [
+          ...payload.agents,
+          ...nextCreatedAssistants.filter((assistant) =>
+            payload.agents.some(
+              (agent) => agent.id === getAgentRouteId(assistant),
+            ),
+          ),
+        ];
+
+        if (selectableAgents.length) {
+          setSelectedAgentIdState((current) => {
+            if (selectableAgents.some((agent) => agent.id === current)) {
+              return current;
+            }
+            let rememberedAgentId: string | null = null;
+            try {
+              rememberedAgentId = window.localStorage.getItem(
+                SELECTED_AGENT_ID_KEY,
+              );
+            } catch {
+              // no-op
+            }
+            if (
+              rememberedAgentId &&
+              selectableAgents.some((agent) => agent.id === rememberedAgentId)
+            ) {
+              return rememberedAgentId;
+            }
+            return selectableAgents[0].id;
+          });
+        }
+      } catch {
+        clearFrontendAuthState();
+      } finally {
+        if (showLoading) setSessionLoading(false);
       }
-    } catch {
-      clearFrontendAuthState();
-    } finally {
-      setSessionLoading(false);
-    }
-  }, [apiProxyUrl, clearFrontendAuthState]);
+    },
+    [apiProxyUrl, clearFrontendAuthState],
+  );
 
   useEffect(() => {
     refreshSession().catch(console.error);
@@ -371,7 +375,7 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
     const refreshDelay = Math.max(session.expiresAt - Date.now() - 60000, 0);
     refreshTimerRef.current = setTimeout(() => {
       refreshAccessToken()
-        .then(() => refreshSession())
+        .then(() => refreshSession({ loading: false }))
         .catch(() => clearFrontendAuthState());
     }, refreshDelay);
 
